@@ -1,4 +1,6 @@
-const DEBUG_LOG_PATH = "/tmp/zai_translate_debug.log";
+import { joinPlatformPath } from "../utils/file-path";
+
+const DEBUG_LOG_FILENAME = "zai_translate_debug.log";
 const MAX_DEBUG_LINES = 1200;
 
 interface DebugState {
@@ -14,9 +16,11 @@ export function logTranslateDebug(
   const prefix = `[${channel}] ${message}`;
   const payload = extra ? `${prefix} ${safeStringify(extra)}` : prefix;
   try {
-    const Z = (globalThis as unknown as {
-      Zotero?: { debug?: (s: string) => void };
-    }).Zotero;
+    const Z = (
+      globalThis as unknown as {
+        Zotero?: { debug?: (s: string) => void };
+      }
+    ).Zotero;
     Z?.debug?.(payload);
   } catch {
     /* ignore */
@@ -31,11 +35,20 @@ export function logTranslateDebug(
 
 function writeDebugFile(payload: string): void {
   try {
-    const Z = (globalThis as unknown as {
-      Zotero?: { File?: { putContentsAsync?: (path: string, data: string) => Promise<void> } };
-    }).Zotero;
+    const Z = (
+      globalThis as unknown as {
+        Zotero?: {
+          DataDirectory?: { dir?: string };
+          Profile?: { dir?: string };
+          File?: {
+            putContentsAsync?: (path: string, data: string) => Promise<void>;
+          };
+        };
+      }
+    ).Zotero;
     const putContentsAsync = Z?.File?.putContentsAsync;
-    if (typeof putContentsAsync !== "function") return;
+    const path = translateDebugLogPath();
+    if (typeof putContentsAsync !== "function" || !path) return;
     const state = debugState();
     state.lines.push(`${new Date().toISOString()} ${payload}`);
     if (state.lines.length > MAX_DEBUG_LINES) {
@@ -43,11 +56,24 @@ function writeDebugFile(payload: string): void {
     }
     state.writing = state.writing
       .catch(() => undefined)
-      .then(() => putContentsAsync(DEBUG_LOG_PATH, `${state.lines.join("\n")}\n`))
+      .then(() => putContentsAsync(path, `${state.lines.join("\n")}\n`))
       .catch(() => undefined);
   } catch {
     /* ignore */
   }
+}
+
+export function translateDebugLogPath(): string | null {
+  const Z = (
+    globalThis as unknown as {
+      Zotero?: {
+        DataDirectory?: { dir?: string };
+        Profile?: { dir?: string };
+      };
+    }
+  ).Zotero;
+  const directory = Z?.DataDirectory?.dir || Z?.Profile?.dir;
+  return directory ? joinPlatformPath(directory, DEBUG_LOG_FILENAME) : null;
 }
 
 function debugState(): DebugState {
@@ -62,6 +88,6 @@ function safeStringify(value: Record<string, unknown>): string {
   try {
     return JSON.stringify(value);
   } catch {
-    return "{\"error\":\"failed to stringify debug payload\"}";
+    return '{"error":"failed to stringify debug payload"}';
   }
 }

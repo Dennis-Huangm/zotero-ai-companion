@@ -9,8 +9,8 @@ This project builds a Zotero sidebar AI agent: a separate AI chat column inside 
 ```bash
 npm test
 npm run build
-cp .scaffold/build/zotero-ai-sidebar.xpi zotero-ai-sidebar.xpi
-cp .scaffold/build/zotero-ai-sidebar.xpi /home/qwer/.zotero/zotero/24q8duho.default/extensions/zotero-ai-sidebar@local.xpi
+cp .scaffold/build/zotero-ai-companion.xpi zotero-ai-companion.xpi
+cp .scaffold/build/zotero-ai-companion.xpi /home/qwer/.zotero/zotero/24q8duho.default/extensions/zotero-ai-companion@dennis-huangm.github.io.xpi
 ```
 
 After installing the XPI, restart Zotero:
@@ -61,7 +61,7 @@ cd ~/Downloads/Zotero_linux-x86_64
 ## Development Lessons
 
 - Zotero versions share the same user profile unless launched with `./zotero -P`; installed XPIs live under `~/.zotero/zotero/<profile>/extensions/`, not inside the Zotero binary folder.
-- One XPI should support Zotero 7/8/9 when APIs are compatible; keep compatibility in `addon/manifest.json` with `strict_min_version` and `strict_max_version`.
+- One XPI should support Zotero 7/8/9/10 when APIs are compatible; keep compatibility in `addon/manifest.json` with `strict_min_version` and `strict_max_version`.
 - Keep provider config local in Zotero prefs. API keys, model IDs, Base URLs, max tokens, reasoning settings, and YOLO mode must not be hardcoded in source.
 - For OpenAI Responses with `store: false`, do not rely on persisted response item IDs. Replay only the current conversation inputs, function calls, and function-call outputs.
 - Selected PDF text is explicit UI context, not semantic intent routing. It may be attached to the next user message, dismissed by the user, and shown in a stable composer chip rather than causing sidebar layout jumps.
@@ -103,7 +103,7 @@ Use these files as the first reference points before changing behavior:
 - Claudian-style UI: reference the message rendering pattern, not its runtime architecture. Useful concepts are `MessageRenderer`, `ThinkingBlockRenderer`, `ToolCallRenderer`, context footer/process blocks, and scroll-to-bottom behavior.
 - Zotero source for compatibility checks: reference Reader APIs around `Zotero.Reader.registerEventListener`, `renderTextSelectionPopup`, `Zotero.Reader.getByTabID`, annotation APIs around `Zotero.Annotations.saveFromJSON` and `DEFAULT_COLOR`, and DOM/pane IDs such as `zotero-item-pane` and `zotero-context-pane`.
 - Better Notes reference scope: use it for note-editing UX expectations and rich-editor behavior only. Do not copy its full workspace model or introduce broad note-management features unless explicitly requested.
-- When adapting Zotero 8/9, verify API symbols against the target Zotero tag/branch before changing plugin code. Prefer symbol checks over version-specific branches unless an API truly diverges.
+- When adapting Zotero 8/9/10, verify API symbols against the target Zotero tag/branch before changing plugin code. Prefer symbol checks over version-specific branches unless an API truly diverges.
 
 ## Non-Negotiables
 

@@ -25,6 +25,9 @@ async function startup({ id, version, resourceURI, rootURI }, reason) {
    * See `src/index.ts` for details.
    */
   const window = Zotero.getMainWindow();
+  const timer = ChromeUtils.importESModule(
+    "resource://gre/modules/Timer.sys.mjs",
+  );
   const ctx = {
     rootURI,
     window,
@@ -48,8 +51,8 @@ async function startup({ id, version, resourceURI, rootURI }, reason) {
     atob: window?.atob?.bind(window),
     btoa: window?.btoa?.bind(window),
     AbortController: window?.AbortController,
-    setTimeout: window?.setTimeout?.bind(window),
-    clearTimeout: window?.clearTimeout?.bind(window),
+    setTimeout: timer.setTimeout,
+    clearTimeout: timer.clearTimeout,
     requestAnimationFrame: window?.requestAnimationFrame?.bind(window),
     cancelAnimationFrame: window?.cancelAnimationFrame?.bind(window),
   };

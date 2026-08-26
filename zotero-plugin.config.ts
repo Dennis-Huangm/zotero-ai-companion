@@ -1,5 +1,4 @@
 import { defineConfig } from "zotero-plugin-scaffold";
-import { unlink } from "node:fs/promises";
 import pkg from "./package.json";
 
 export default defineConfig({
@@ -8,6 +7,10 @@ export default defineConfig({
   name: pkg.config.addonName,
   id: pkg.config.addonID,
   namespace: pkg.config.addonRef,
+  updateURL:
+    "https://github.com/Dennis-Huangm/zotero-ai-companion/releases/download/release/update.json",
+  xpiDownloadLink:
+    "https://github.com/Dennis-Huangm/zotero-ai-companion/releases/download/v{{version}}/zotero-ai-companion.xpi",
 
   build: {
     assets: ["addon/**/*.*"],
@@ -21,14 +24,6 @@ export default defineConfig({
     },
     prefs: {
       prefix: pkg.config.prefsPrefix,
-    },
-    hooks: {
-      "build:makeUpdateJSON": async (ctx) => {
-        await Promise.allSettled([
-          unlink(`${ctx.dist}/update.json`),
-          unlink(`${ctx.dist}/update-beta.json`),
-        ]);
-      },
     },
     esbuildOptions: [
       {

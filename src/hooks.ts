@@ -60,6 +60,7 @@ import {
   saveUiSettings,
   type UiSettings,
 } from "./settings/ui-settings";
+import { initializeChatHistoryStorage } from "./settings/chat-history";
 import { pullFromCloud, pushToCloud, testSyncConnection } from "./sync";
 import {
   loadSyncAccount,
@@ -91,6 +92,17 @@ async function onStartup() {
   ]);
 
   initLocale();
+
+  try {
+    const historyPath = await initializeChatHistoryStorage();
+    Zotero.debug(`[zai] chat history storage ready: ${historyPath}`);
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    Zotero.logError(error);
+    Zotero.debug(
+      `[zai] chat history storage initialization failed: ${error.message}`,
+    );
+  }
 
   // Per-window setup BEFORE the global `registerSidebar` so each window
   // has its FTL locale strings and ztoolkit ready by the time the column

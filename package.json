@@ -1,28 +1,28 @@
 {
-  "name": "zotero-ai-sidebar",
+  "name": "zotero-ai-companion",
   "type": "module",
-  "version": "0.3.1",
-  "description": "Chat sidebar for Zotero with Claude and GPT support and configurable model presets.",
+  "version": "1.0.0",
+  "description": "AI reading companion for Zotero with chat, translation, notes, tools, and conversation history.",
   "config": {
-    "addonName": "Zotero AI Sidebar",
-    "addonID": "zotero-ai-sidebar@local",
-    "addonRef": "zotero-ai-sidebar",
-    "addonInstance": "ZoteroAISidebar",
+    "addonName": "Zotero AI Companion",
+    "addonID": "zotero-ai-companion@dennis-huangm.github.io",
+    "addonRef": "zotero-ai-companion",
+    "addonInstance": "ZoteroAICompanion",
     "prefsPrefix": "extensions.zotero-ai-sidebar"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xuhan-rgb/zotero-ai-sidebar.git"
+    "url": "git+https://github.com/Dennis-Huangm/zotero-ai-companion.git"
   },
   "author": "qwer",
   "bugs": {
-    "url": "https://github.com/xuhan-rgb/zotero-ai-sidebar/issues"
+    "url": "https://github.com/Dennis-Huangm/zotero-ai-companion/issues"
   },
-  "homepage": "https://github.com/xuhan-rgb/zotero-ai-sidebar#readme",
+  "homepage": "https://github.com/Dennis-Huangm/zotero-ai-companion#readme",
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "start": "zotero-plugin serve",
-    "build": "zotero-plugin build && tsc --noEmit",
+    "build": "zotero-plugin build && tsc --noEmit && node scripts/verify-build.mjs",
     "lint:check": "prettier --check . && eslint .",
     "lint:fix": "prettier --write . && eslint . --fix",
     "release": "zotero-plugin release",
@@ -41,7 +41,7 @@
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "zotero-plugin-toolkit": "^5.1.0-beta.13"
+    "zotero-plugin-toolkit": "^5.2.0"
   },
   "devDependencies": {
     "@types/chai": "^5.2.3",
@@ -59,8 +59,8 @@
     "prettier": "^3.7.4",
     "typescript": "^5.9.3",
     "vitest": "^4.1.5",
-    "zotero-plugin-scaffold": "^0.8.2",
-    "zotero-types": "^4.1.0-beta.4"
+    "zotero-plugin-scaffold": "^0.8.8",
+    "zotero-types": "^4.1.3"
   },
   "prettier": {
     "printWidth": 80,

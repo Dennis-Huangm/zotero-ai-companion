@@ -28,10 +28,14 @@ import type {
 } from "../providers/types";
 import {
   DEFAULT_CHAT_THREAD_ID,
+  chatHistoryPath,
   deleteChatThread,
+  filterChatHistorySnapshots,
+  loadAllChatThreads,
   loadChatThreads,
   saveChatMessages,
   type ChatThreadSnapshot,
+  type ChatHistoryScope,
 } from "../settings/chat-history";
 import { loadQuickPromptSettings } from "../settings/quick-prompts";
 import { loadPresets, savePresets, zoteroPrefs } from "../settings/storage";
@@ -75,6 +79,11 @@ import {
   renderMathInto,
   type MathRenderMode,
 } from "../ui/math";
+import {
+  parseMarkdownTable,
+  type MarkdownTable,
+  type MarkdownTableAlignment,
+} from "../ui/markdown-table";
 import { serializeSelectionAsMarkdown } from "../ui/selection-serialize";
 import {
   TranslateModeController,
@@ -272,6 +281,8 @@ const stateCache = new WeakMap<Element, Map<string, PanelState>>();
 const activeThreads = new WeakMap<Element, Map<string, string>>();
 const latestSelectionItems = new WeakMap<Element, number | null>();
 const loadedPersistedThreads = new WeakMap<Element, Set<string>>();
+const loadedAllPersistedThreads = new WeakSet<Element>();
+const historyViews = new WeakMap<Element, ChatHistoryScope>();
 
 type AssistantProgressStage =
   | "starting"
@@ -328,7 +339,7 @@ function createPanelState(
   return {
     itemID,
     threadID,
-    threadTitle: "新对话",
+    threadTitle: "",
     threadCreatedAt: now,
     threadUpdatedAt: now,
     presets,
@@ -428,9 +439,13 @@ function renderPanel(mount: HTMLElement, state: PanelState) {
     });
     applyChatAppearance(panel, state.uiSettings, state.localUiSettings);
     panel.append(renderToolbar(doc, mount, state));
-    panel.append(renderContextCard(doc, state.itemID));
-    panel.append(renderMessages(doc, mount, state));
-    panel.append(renderInput(doc, mount, state));
+    if (historyViews.has(mount)) {
+      panel.append(renderChatHistoryPage(doc, mount, state));
+    } else {
+      panel.append(renderContextCard(doc, state.itemID));
+      panel.append(renderMessages(doc, mount, state));
+      panel.append(renderInput(doc, mount, state));
+    }
   } catch (err) {
     debugZai("sidebar.render.failed", {
       error: errorMessage(err),
@@ -449,6 +464,7 @@ function renderPanel(mount: HTMLElement, state: PanelState) {
   state.scrollToBottom = false;
   state.focusInput = false;
   afterRender(mount, () => {
+    if (historyViews.has(mount)) return;
     const lockedScroll = activeMessagesScrollLock(state);
     if (lockedScroll) {
       scheduleMessagesScrollRestore(mount, lockedScroll);
@@ -519,6 +535,7 @@ function applyChatAppearance(
 }
 
 function renderNoActiveChatPanel(mount: HTMLElement): void {
+  requestAllPersistedThreads(mount);
   const doc = mount.ownerDocument!;
   const panel = el(doc, "div", "zai-app native-panel zai-no-active-chat");
   applyChatAppearance(
@@ -526,11 +543,15 @@ function renderNoActiveChatPanel(mount: HTMLElement): void {
     loadUiSettings(zoteroPrefs()),
     loadLocalUiSettings(zoteroPrefs()),
   );
-  panel.append(
-    renderNoActiveToolbar(doc, mount),
-    renderNoActiveMessages(doc),
-    renderNoActiveComposer(doc, mount),
-  );
+  panel.append(renderNoActiveToolbar(doc, mount));
+  if (historyViews.has(mount)) {
+    panel.append(renderChatHistoryPage(doc, mount, null));
+  } else {
+    panel.append(
+      renderNoActiveMessages(doc),
+      renderNoActiveComposer(doc, mount),
+    );
+  }
   mount.replaceChildren(panel);
   updateNoActiveChatPanel(mount);
 }
@@ -548,8 +569,12 @@ function renderNoActiveToolbar(doc: Document, mount: HTMLElement): HTMLElement {
     "div",
     "preset-switcher-row preset-switcher-bottom",
   );
-  topRow.append(el(doc, "strong", "", "AI 对话"));
+  topRow.append(el(doc, "strong", "", "对话"));
   topRow.append(el(doc, "span", "zai-no-chat-state", "未打开对话"));
+  const history = buttonEl(doc, "历史记录");
+  history.title = "打开历史记录页面";
+  history.addEventListener("click", () => openChatHistoryView(mount, null));
+  topRow.append(history);
 
   if (presets.length === 0) {
     const addModel = buttonEl(doc, "添加模型");
@@ -610,7 +635,7 @@ function renderNoActiveToolbar(doc: Document, mount: HTMLElement): HTMLElement {
   bottomRow.append(settings);
 
   const hide = buttonEl(doc, "隐藏");
-  hide.title = "隐藏 AI 对话列";
+  hide.title = "隐藏对话侧栏";
   hide.addEventListener("click", () => hideCurrentSidebar(mount));
   bottomRow.append(hide);
   bar.append(topRow, bottomRow);
@@ -621,8 +646,8 @@ function renderNoActiveMessages(doc: Document): HTMLElement {
   const messages = el(doc, "div", "messages zai-no-chat-messages");
   const empty = el(doc, "div", "zai-no-chat-empty");
   empty.append(
-    el(doc, "strong", "", "没有打开的对话"),
-    el(doc, "div", "", "选择已有对话，或新建一个对话后再输入。"),
+    el(doc, "strong", "zai-history-empty-title", "正在恢复历史会话…"),
+    el(doc, "div", "zai-history-empty-detail", "稍候会自动打开最近一次会话。"),
   );
   messages.append(empty);
   return messages;
@@ -638,7 +663,7 @@ function renderNoActiveComposer(
   newChat.className = "zai-new-chat-button";
   newChat.addEventListener("click", () => createChatThreadFromSelection(mount));
   actions.append(newChat);
-  composer.append(renderChatTabs(doc, mount, null), actions);
+  composer.append(actions);
   return composer;
 }
 
@@ -752,76 +777,335 @@ function captureDraftFromInput(
   }
 }
 
-function renderChatTabs(
+function openChatHistoryView(
+  mount: HTMLElement,
+  state: PanelState | null,
+): void {
+  capturePanelStateIfPresent(mount, state);
+  const currentItemID = latestSidebarItemID(mount) ?? state?.itemID ?? null;
+  historyViews.set(mount, currentItemID == null ? "all" : "current");
+  if (state) renderPanel(mount, state);
+  else renderNoActiveChatPanel(mount);
+}
+
+function closeChatHistoryView(
+  mount: HTMLElement,
+  state: PanelState | null,
+): void {
+  historyViews.delete(mount);
+  if (state) renderPanel(mount, state);
+  else renderNoActiveChatPanel(mount);
+}
+
+function capturePanelStateIfPresent(
+  mount: HTMLElement,
+  state: PanelState | null,
+): void {
+  if (state && mount.querySelector(".input-row"))
+    capturePanelState(mount, state);
+}
+
+function renderChatHistoryPage(
   doc: Document,
   mount: HTMLElement,
   state: PanelState | null,
 ): HTMLElement {
-  const row = el(doc, "div", "zai-chat-tabs");
-  const label = el(doc, "span", "zai-chat-tabs-label", "对话");
-  row.append(label);
-  const tabs = chatTabStates(mount);
-  tabs.forEach((tabState, index) => {
-    const active = !!state && isSamePanelThread(tabState, state);
-    const tab = buttonEl(doc, String(index + 1));
-    tab.className = [
-      "zai-chat-tab",
-      active ? "is-active" : "",
-      tabState.sending ? "is-sending" : "",
-      tabState.messages.length > 0 ? "has-messages" : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
-    tab.title = chatTabTooltip(tabState);
-    tab.disabled = active;
-    tab.addEventListener("click", () =>
-      switchChatThread(mount, state, tabState),
+  const page = el(doc, "section", "zai-history-page");
+  const head = el(doc, "div", "zai-history-page-head");
+  const heading = el(doc, "strong", "zai-history-page-title", "历史记录");
+  const back = buttonEl(doc, "返回对话");
+  back.className = "zai-history-back";
+  back.addEventListener("click", () => closeChatHistoryView(mount, state));
+  head.append(heading, back);
+
+  const currentItemID = latestSidebarItemID(mount) ?? state?.itemID ?? null;
+  const scope =
+    historyViews.get(mount) ?? (currentItemID == null ? "all" : "current");
+  const filters = el(doc, "div", "zai-history-filters");
+  const all = buttonEl(doc, "全部");
+  const current = buttonEl(doc, "当前论文");
+  all.className = scope === "all" ? "is-active" : "";
+  current.className = scope === "current" ? "is-active" : "";
+  current.disabled = currentItemID == null;
+  current.title =
+    currentItemID == null ? "请先选择一篇论文" : paperTitle(currentItemID);
+  all.addEventListener("click", () => setChatHistoryScope(mount, state, "all"));
+  current.addEventListener("click", () =>
+    setChatHistoryScope(mount, state, "current"),
+  );
+  filters.append(all, current);
+  if (currentItemID != null) {
+    filters.append(
+      el(
+        doc,
+        "span",
+        "zai-history-current-paper",
+        paperTitle(currentItemID) || `条目 ${currentItemID}`,
+      ),
     );
-    row.append(tab);
-  });
-
-  const add = buttonEl(doc, "+");
-  add.className = "zai-chat-tab-add";
-  add.title = "为当前选中的论文新建一个独立对话";
-  add.addEventListener("click", () =>
-    createChatThreadFromSelection(mount, state),
-  );
-  row.append(add);
-
-  if (state) {
-    const close = buttonEl(doc, "×");
-    close.className = "zai-chat-tab-close";
-    close.title = state.sending
-      ? "当前对话正在回复，结束后才能关闭"
-      : "关闭并删除当前对话";
-    close.disabled = state.sending;
-    close.addEventListener("click", () => {
-      closeChatThread(mount, state);
-    });
-    row.append(close);
   }
-  return row;
+
+  const body = el(doc, "div", "zai-history-page-body");
+  body.append(el(doc, "div", "zai-history-loading", "正在读取历史记录…"));
+  const storage = el(doc, "div", "zai-history-page-storage");
+  storage.title = chatHistoryPath();
+  storage.textContent = `本机存储：${chatHistoryPath()}`;
+  page.append(head, filters, body, storage);
+  void populateChatHistoryPage(body, mount, state, scope, currentItemID);
+  return page;
 }
 
-function chatTabStates(mount: HTMLElement): PanelState[] {
-  return [...panelStateCache(mount).values()].sort(comparePanelThreadStates);
+function setChatHistoryScope(
+  mount: HTMLElement,
+  state: PanelState | null,
+  scope: ChatHistoryScope,
+): void {
+  historyViews.set(mount, scope);
+  if (state) renderPanel(mount, state);
+  else renderNoActiveChatPanel(mount);
 }
 
-function comparePanelThreadStates(a: PanelState, b: PanelState): number {
-  return (
-    a.threadCreatedAt - b.threadCreatedAt ||
-    a.threadID.localeCompare(b.threadID)
-  );
+async function populateChatHistoryPage(
+  body: HTMLElement,
+  mount: HTMLElement,
+  state: PanelState | null,
+  scope: ChatHistoryScope,
+  currentItemID: number | null,
+): Promise<void> {
+  const doc = body.ownerDocument!;
+  try {
+    const snapshots = await loadAllChatThreads();
+    if (!body.isConnected || historyViews.get(mount) !== scope) return;
+    const visible = filterChatHistorySnapshots(snapshots, scope, currentItemID);
+    body.replaceChildren();
+    body.append(
+      el(
+        doc,
+        "div",
+        "zai-history-page-count",
+        scope === "current"
+          ? `当前论文 · ${visible.length} 个会话`
+          : `全部 · ${visible.length} 个会话`,
+      ),
+    );
+    if (visible.length === 0) {
+      body.append(
+        el(
+          doc,
+          "div",
+          "zai-history-page-empty",
+          scope === "current"
+            ? "当前论文还没有历史会话。"
+            : "还没有已保存的历史会话。",
+        ),
+      );
+      return;
+    }
+
+    const list = el(doc, "div", "zai-history-page-list");
+    for (const snapshot of visible) {
+      const item = doc.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+      item.className = "zai-history-page-item";
+      const paper =
+        snapshot.itemID == null
+          ? "普通对话"
+          : paperTitle(snapshot.itemID) || `条目 ${snapshot.itemID}`;
+      const open = doc.createElementNS(XHTML_NS, "button") as HTMLButtonElement;
+      open.type = "button";
+      open.className = "zai-history-page-item-open";
+      const itemTitle = doc.createElementNS(XHTML_NS, "strong");
+      itemTitle.className = "zai-history-page-item-title";
+      itemTitle.textContent = snapshot.title;
+      const itemPaper = doc.createElementNS(XHTML_NS, "span");
+      itemPaper.className = "zai-history-page-item-paper";
+      itemPaper.textContent = paper;
+      const itemMeta = doc.createElementNS(XHTML_NS, "span");
+      itemMeta.className = "zai-history-page-item-meta";
+      itemMeta.textContent = `${formatHistoryUpdatedAt(snapshot.updatedAt)} · ${snapshot.messages.length} 条消息`;
+      open.append(itemTitle, itemPaper, itemMeta);
+      open.addEventListener("click", () =>
+        openHistorySnapshot(mount, snapshot),
+      );
+      const itemActions = doc.createElementNS(XHTML_NS, "div");
+      itemActions.className = "zai-history-page-item-actions";
+      const rename = doc.createElementNS(
+        XHTML_NS,
+        "button",
+      ) as HTMLButtonElement;
+      rename.type = "button";
+      rename.className = "zai-history-rename";
+      rename.textContent = "重命名";
+      rename.addEventListener("click", () =>
+        beginHistoryRename(item, snapshot, mount, state),
+      );
+      const remove = doc.createElementNS(
+        XHTML_NS,
+        "button",
+      ) as HTMLButtonElement;
+      remove.type = "button";
+      remove.className = "zai-history-delete";
+      remove.textContent = "删除";
+      remove.addEventListener("click", () => {
+        void deleteHistorySnapshot(snapshot, mount, state);
+      });
+      const cached = panelStateCache(mount).get(
+        panelStateKey(snapshot.itemID, snapshot.threadID),
+      );
+      rename.disabled = cached?.sending === true;
+      remove.disabled = cached?.sending === true;
+      itemActions.append(rename, remove);
+      item.append(open, itemActions);
+      list.append(item);
+    }
+    body.append(list);
+  } catch (err) {
+    if (!body.isConnected) return;
+    body.replaceChildren(
+      el(doc, "div", "zai-history-page-empty", "历史记录读取失败。"),
+      el(doc, "div", "zai-history-page-error", errorMessage(err)),
+    );
+  }
 }
 
-function isSamePanelThread(a: PanelState, b: PanelState): boolean {
-  return a.itemID === b.itemID && a.threadID === b.threadID;
+function openHistorySnapshot(
+  mount: HTMLElement,
+  snapshot: ChatThreadSnapshot,
+): void {
+  const cache = panelStateCache(mount);
+  const key = panelStateKey(snapshot.itemID, snapshot.threadID);
+  let next = cache.get(key);
+  if (!next) {
+    next = createPanelState(snapshot.itemID, snapshot.threadID);
+    cache.set(key, next);
+  }
+  applyChatThreadSnapshot(next, snapshot);
+  historyViews.delete(mount);
+  setActiveThreadID(mount, next.itemID, next.threadID);
+  next.scrollToBottom = true;
+  states.set(mount, next);
+  renderPanel(mount, next);
+}
+
+function beginHistoryRename(
+  item: HTMLElement,
+  snapshot: ChatThreadSnapshot,
+  mount: HTMLElement,
+  state: PanelState | null,
+): void {
+  const doc = item.ownerDocument!;
+  const editor = doc.createElementNS(XHTML_NS, "div");
+  editor.className = "zai-history-rename-editor";
+  const input = doc.createElementNS(XHTML_NS, "input") as HTMLInputElement;
+  input.type = "text";
+  input.maxLength = 80;
+  input.value = snapshot.title;
+  input.setAttribute("aria-label", "会话名称");
+  const save = doc.createElementNS(XHTML_NS, "button") as HTMLButtonElement;
+  save.type = "button";
+  save.textContent = "保存";
+  const cancel = doc.createElementNS(XHTML_NS, "button") as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.textContent = "取消";
+
+  const submit = async () => {
+    const title = input.value.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!title) {
+      input.focus();
+      return;
+    }
+    save.disabled = true;
+    cancel.disabled = true;
+    try {
+      await saveChatMessages(snapshot.itemID, snapshot.messages, {
+        threadID: snapshot.threadID,
+        title,
+        createdAt: snapshot.createdAt,
+      });
+      snapshot.title = title;
+      const cached = panelStateCache(mount).get(
+        panelStateKey(snapshot.itemID, snapshot.threadID),
+      );
+      if (cached) {
+        cached.threadTitle = title;
+        cached.threadUpdatedAt = Date.now();
+      }
+      refreshChatHistoryView(mount, state);
+    } catch (err) {
+      save.disabled = false;
+      cancel.disabled = false;
+      input.title = errorMessage(err);
+      input.focus();
+    }
+  };
+  save.addEventListener("click", () => void submit());
+  cancel.addEventListener("click", () => refreshChatHistoryView(mount, state));
+  input.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void submit();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      refreshChatHistoryView(mount, state);
+    }
+  });
+  editor.append(input, save, cancel);
+  item.replaceChildren(editor);
+  doc.defaultView?.setTimeout(() => {
+    input.focus();
+    input.select();
+  }, 0);
+}
+
+async function deleteHistorySnapshot(
+  snapshot: ChatThreadSnapshot,
+  mount: HTMLElement,
+  state: PanelState | null,
+): Promise<void> {
+  const win = mount.ownerDocument?.defaultView;
+  const confirmed =
+    win?.confirm?.(`确定永久删除历史会话「${snapshot.title}」吗？`) ?? false;
+  if (!confirmed) return;
+  await deleteChatThread(snapshot.itemID, snapshot.threadID);
+  const key = panelStateKey(snapshot.itemID, snapshot.threadID);
+  panelStateCache(mount).delete(key);
+  if (
+    state &&
+    state.itemID === snapshot.itemID &&
+    state.threadID === snapshot.threadID
+  ) {
+    states.delete(mount);
+    activeThreadMap(mount).delete(panelItemKey(snapshot.itemID));
+    renderNoActiveChatPanel(mount);
+    return;
+  }
+  refreshChatHistoryView(mount, state);
+}
+
+function refreshChatHistoryView(
+  mount: HTMLElement,
+  state: PanelState | null,
+): void {
+  if (state && isActivePanelState(mount, state)) renderPanel(mount, state);
+  else renderNoActiveChatPanel(mount);
+}
+
+function formatHistoryUpdatedAt(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "时间未知";
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function createChatThreadFromSelection(
   mount: HTMLElement,
   baseState: PanelState | null = states.get(mount) ?? null,
 ): PanelState {
+  historyViews.delete(mount);
   const next = createPanelState(latestSidebarItemID(mount), makeChatThreadID());
   if (baseState) {
     next.selectedId = baseState.selectedId;
@@ -843,29 +1127,12 @@ function switchChatThread(
   current: PanelState | null,
   next: PanelState,
 ): void {
+  historyViews.delete(mount);
   if (current) capturePanelState(mount, current);
   setActiveThreadID(mount, next.itemID, next.threadID);
   states.set(mount, next);
   void ensureHistoryLoaded(mount, next);
   renderPanel(mount, next);
-}
-
-function closeChatThread(mount: HTMLElement, state: PanelState): void {
-  if (state.sending) return;
-  const tabs = chatTabStates(mount);
-  const index = tabs.findIndex((tab) => isSamePanelThread(tab, state));
-  const remaining = tabs.filter((tab) => !isSamePanelThread(tab, state));
-  const next = remaining[index] ?? remaining[index - 1] ?? remaining[0] ?? null;
-  panelStateCache(mount).delete(panelStateKey(state.itemID, state.threadID));
-  void deleteChatThread(state.itemID, state.threadID);
-  if (next) {
-    setActiveThreadID(mount, next.itemID, next.threadID);
-    states.set(mount, next);
-    renderPanel(mount, next);
-  } else {
-    states.delete(mount);
-    renderNoActiveChatPanel(mount);
-  }
 }
 
 function latestSidebarItemID(mount: Element): number | null {
@@ -880,20 +1147,14 @@ function chatThreadTitle(state: PanelState): string {
   const firstUser = state.messages.find((message) => message.role === "user");
   return (
     contentPreview(
-      firstUser?.task?.title ||
+      state.threadTitle ||
+        firstUser?.task?.title ||
         firstUser?.task?.promptPreview ||
         firstUser?.content ||
-        state.threadTitle ||
         "新对话",
       36,
     ) || "新对话"
   );
-}
-
-function chatTabTooltip(state: PanelState): string {
-  const title = chatThreadTitle(state);
-  const paper = state.itemID == null ? "" : paperTitle(state.itemID);
-  return paper ? `${title}\n${paper}` : title;
 }
 
 function savePanelMessages(state: PanelState): void {
@@ -903,6 +1164,11 @@ function savePanelMessages(state: PanelState): void {
     threadID: state.threadID,
     title: state.threadTitle,
     createdAt: new Date(state.threadCreatedAt).toISOString(),
+  }).catch((err) => {
+    debugZai("chat-history.save.failed", {
+      path: chatHistoryPath(),
+      error: errorMessage(err),
+    });
   });
 }
 
@@ -983,9 +1249,11 @@ function renderToolbar(doc: Document, mount: HTMLElement, state: PanelState) {
   const bottomRow = el(
     doc,
     "div",
-    "preset-switcher-row preset-switcher-bottom",
+    "preset-switcher-row preset-switcher-bottom preset-switcher-bottom-grouped",
   );
-  const title = el(doc, "strong", "", "AI 对话");
+  const primaryActions = el(doc, "div", "preset-switcher-actions");
+  const displayActions = el(doc, "div", "preset-switcher-display");
+  const title = el(doc, "strong", "", "对话");
   topRow.append(title);
 
   if (toolbarPresets.length === 0) {
@@ -1022,7 +1290,7 @@ function renderToolbar(doc: Document, mount: HTMLElement, state: PanelState) {
     openAddonPreferences(doc);
   });
   if (state.messages.length > 0) {
-    const copyAll = buttonEl(doc, "复制MD");
+    const copyAll = buttonEl(doc, "复制");
     copyAll.title = state.copyDebugContext
       ? "复制当前对话为 Markdown（含工具上下文和 PDF 片段）"
       : "复制当前对话为 Markdown（只含论文介绍和对话）";
@@ -1040,17 +1308,11 @@ function renderToolbar(doc: Document, mount: HTMLElement, state: PanelState) {
       flashButton(copyAll, "已复制");
     });
     topRow.append(copyAll);
-
-    const clear = buttonEl(doc, "清空");
-    clear.disabled = state.sending;
-    clear.title = "清空并保存当前条目的聊天记录";
-    clear.addEventListener("click", () => {
-      state.messages = [];
-      savePanelMessages(state);
-      renderPanel(mount, state);
-    });
-    topRow.append(clear);
   }
+  const history = buttonEl(doc, "历史记录");
+  history.title = "打开历史记录页面";
+  history.addEventListener("click", () => openChatHistoryView(mount, state));
+  topRow.append(history);
   const noteWindowOpen = isNoteWindowOpenForMount(mount);
   const openNote = buttonEl(doc, noteWindowOpen ? "已打开" : "打开笔记");
   openNote.className = "open-note-button";
@@ -1059,8 +1321,8 @@ function renderToolbar(doc: Document, mount: HTMLElement, state: PanelState) {
   openNote.addEventListener("click", () => {
     void openCurrentItemNote(doc, state.itemID, openNote);
   });
-  bottomRow.append(openNote);
-  bottomRow.append(settings);
+  primaryActions.append(openNote);
+  primaryActions.append(settings);
   const win = mount.ownerDocument!.defaultView!;
   const selectedPaperCount = safeSelectedItemIDs(win).length;
   const fullTranslate = buttonEl(
@@ -1076,7 +1338,7 @@ function renderToolbar(doc: Document, mount: HTMLElement, state: PanelState) {
   fullTranslate.addEventListener("click", () => {
     void translateSelectedPapersFullText(mount, state, fullTranslate);
   });
-  bottomRow.append(fullTranslate);
+  primaryActions.append(fullTranslate);
   const retranslate = buttonEl(
     doc,
     selectedPaperCount > 1 ? `重译(${selectedPaperCount})` : "重译",
@@ -1092,7 +1354,7 @@ function renderToolbar(doc: Document, mount: HTMLElement, state: PanelState) {
       forceRefresh: true,
     });
   });
-  bottomRow.append(retranslate);
+  primaryActions.append(retranslate);
   const pointTranslate = buttonEl(doc, "点译");
   pointTranslate.className = "zai-sidebar-translate-button";
   pointTranslate.title = "开启后点击 PDF 段落显示译文，不写入注释";
@@ -1100,15 +1362,16 @@ function renderToolbar(doc: Document, mount: HTMLElement, state: PanelState) {
   pointTranslate.addEventListener("click", () => {
     void toggleTranslateMode(win, pointTranslate);
   });
-  bottomRow.append(pointTranslate);
+  primaryActions.append(pointTranslate);
   const hide = buttonEl(doc, "隐藏");
-  hide.title = "隐藏 AI 对话列";
+  hide.title = "隐藏对话侧栏";
   hide.addEventListener("click", () => hideCurrentSidebar(mount));
-  bottomRow.append(hide);
-  bottomRow.append(renderChatFontSizeControl(doc, mount, state));
+  topRow.append(hide);
+  displayActions.append(renderChatFontSizeControl(doc, mount, state));
   if (state.messages.length > 0) {
-    bottomRow.append(renderCopyDebugToggle(doc, mount, state));
+    displayActions.append(renderCopyDebugToggle(doc, mount, state));
   }
+  bottomRow.append(primaryActions, displayActions);
   bar.append(topRow, bottomRow);
   return bar;
 }
@@ -1561,7 +1824,7 @@ function renderContextCard(doc: Document, itemID: number | null) {
   const card = el(doc, "div", "ctx-card");
   card.append(
     el(doc, "div", "ctx-title", title),
-    el(doc, "div", "ctx-meta", `Item ID: ${itemID ?? "none"}`),
+    el(doc, "div", "ctx-meta", `条目 ${itemID ?? "未选择"}`),
   );
   return card;
 }
@@ -1612,7 +1875,7 @@ function renderQuickPrompts(
       disabled: false,
     },
     {
-      label: "🔖 全文重点",
+      label: "全文重点",
       prompt: promptSettings.builtIns.fullTextHighlight,
       disabled: !!fullTextHighlightDisabled,
       disabledTitle: fullTextHighlightDisabled,
@@ -1642,7 +1905,7 @@ function renderQuickPrompts(
       void sendMessage(mount, state, prompt, {
         explainSelection,
         fullTextHighlight,
-        taskTitle: label.replace(/^🔖\s*/, ""),
+        taskTitle: label,
       });
     });
     box.append(button);
@@ -2183,7 +2446,7 @@ function renderInput(doc: Document, mount: HTMLElement, state: PanelState) {
       ? queueAllowed
         ? "AI 回答中…当前回复结束后将按顺序执行队列里的消息"
         : "AI 回答中…等待结束后再发送（设置可开启发送中排队）"
-      : "问点什么... (Enter 发送，Shift+Enter 换行)"
+      : "输入问题，Enter 发送，Shift+Enter 换行"
     : "先添加一个模型预设。";
   input.disabled = !preset;
   input.value = state.draftText;
@@ -2272,21 +2535,14 @@ function renderInput(doc: Document, mount: HTMLElement, state: PanelState) {
     slashMenu,
     input,
   );
-  row.append(inputStack, renderWebSearchSwitcher(doc, mount, state));
+  row.append(inputStack);
+  const webSearch = renderWebSearchSwitcher(doc, mount, state);
   const imageAttach = renderImageAttachButton(
     doc,
     mount,
     state,
     input,
     updateStatus,
-  );
-  const screenshotAttach = renderScreenshotAttachButton(
-    doc,
-    mount,
-    state,
-    input,
-    updateStatus,
-    status,
   );
 
   const send = buttonEl(doc, state.sending ? "↑ 排队" : "↑");
@@ -2323,16 +2579,8 @@ function renderInput(doc: Document, mount: HTMLElement, state: PanelState) {
   composer.append(
     renderQuickPrompts(doc, mount, state),
     renderTaskQueue(doc, mount, state),
-    renderChatTabs(doc, mount, state),
     row,
-    renderComposerFooter(
-      doc,
-      mount,
-      state,
-      status,
-      screenshotAttach,
-      imageAttach,
-    ),
+    renderComposerFooter(doc, mount, state, status, webSearch, imageAttach),
   );
   return composer;
 }
@@ -2474,57 +2722,6 @@ function renderImageAttachButton(
   return control;
 }
 
-function renderScreenshotAttachButton(
-  doc: Document,
-  mount: HTMLElement,
-  state: PanelState,
-  input: HTMLTextAreaElement,
-  updateStatus: (captureFocus?: boolean) => void,
-  status: HTMLElement,
-): HTMLElement {
-  const button = buttonEl(doc, "截图");
-  button.type = "button";
-  button.className = "screenshot-attach-btn";
-  button.disabled = !selectedChatPreset(state);
-  button.title =
-    "选择屏幕/窗口截图；如果系统不支持，请用系统截图后 Ctrl+V 粘贴";
-  button.addEventListener("click", () => {
-    void attachScreenshotImage(doc, mount, state, input, updateStatus, status);
-  });
-  return button;
-}
-
-async function attachScreenshotImage(
-  doc: Document,
-  mount: HTMLElement,
-  state: PanelState,
-  input: HTMLTextAreaElement,
-  updateStatus: (captureFocus?: boolean) => void,
-  status: HTMLElement,
-) {
-  captureDraftFromInput(input, state);
-  setComposerTransientStatus(status, "请拖拽框选要截图的区域…");
-  const file = await captureScreenImage(doc);
-  if (!file) {
-    input.focus();
-    setComposerTransientStatus(
-      status,
-      "当前环境不能直接截图；请用系统截图复制后 Ctrl+V 粘贴",
-    );
-    return;
-  }
-  await addDraftImages(doc, state, [file], input);
-  updateStatus(false);
-  renderPanel(mount, state);
-}
-
-function setComposerTransientStatus(status: HTMLElement, text: string) {
-  const node = status.ownerDocument!.createElement("span");
-  node.className = "composer-status-badge composer-status-badge-image";
-  node.textContent = text;
-  status.replaceChildren(node);
-}
-
 function renderSelectionBadge(
   doc: Document,
   mount: HTMLElement,
@@ -2570,7 +2767,7 @@ function renderDraftImages(
     const label = el(doc, "span", "draft-image-label", image.marker);
     label.title = image.name;
     const remove = buttonEl(doc, "×");
-    remove.title = "移除截图";
+    remove.title = "移除图片";
     remove.addEventListener("click", () => {
       removeDraftImage(state, input, image);
       renderPanel(mount, state);
@@ -2599,15 +2796,22 @@ function renderComposerFooter(
   mount: HTMLElement,
   state: PanelState,
   status: HTMLElement,
-  screenshotAttach: HTMLElement,
+  webSearch: HTMLElement,
   imageAttach: HTMLElement,
 ): HTMLElement {
   const footer = el(doc, "div", "composer-footer");
   const left = el(doc, "div", "composer-footer-left");
   const actions = el(doc, "div", "composer-footer-actions");
+  const newChat = buttonEl(doc, "＋ 新对话");
+  newChat.className = "zai-footer-new-chat";
+  newChat.title = "为当前选中的论文新建独立对话";
+  newChat.addEventListener("click", () =>
+    createChatThreadFromSelection(mount, state),
+  );
   left.append(status);
   actions.append(
-    screenshotAttach,
+    newChat,
+    webSearch,
     imageAttach,
     renderModelSwitcher(doc, mount, state),
     renderReasoningSwitcher(doc, mount, state),
@@ -2631,7 +2835,7 @@ function renderWebSearchSwitcher(
   const trigger = doc.createElement("button");
   trigger.type = "button";
   trigger.className = "web-search-trigger";
-  trigger.textContent = enabled ? "🌐 联网" : "＋ 联网";
+  trigger.textContent = "联网";
   trigger.title = enabledForPreset
     ? webSearchToggleTitle(mode)
     : "联网工具目前仅对 OpenAI Responses 兼容配置生效";
@@ -2646,19 +2850,27 @@ function renderWebSearchSwitcher(
   const closePopup = () => {
     if (popup.style.display === "none") return;
     popup.style.display = "none";
+    popup.classList.remove("web-search-popup-composer");
+    if (popup.parentElement !== wrap) wrap.append(popup);
     trigger.setAttribute("aria-expanded", "false");
     doc.removeEventListener("mousedown", outsideHandler, true);
     doc.removeEventListener("keydown", escapeHandler, true);
   };
   const openPopup = () => {
     if (popup.style.display !== "none") return;
+    const composer = wrap.closest(".composer");
+    if (composer) {
+      popup.classList.add("web-search-popup-composer");
+      composer.append(popup);
+    }
     popup.style.display = "";
     trigger.setAttribute("aria-expanded", "true");
     doc.addEventListener("mousedown", outsideHandler, true);
     doc.addEventListener("keydown", escapeHandler, true);
   };
   const outsideHandler = (event: Event) => {
-    if (!wrap.contains(event.target as Node)) closePopup();
+    const target = event.target as Node;
+    if (!wrap.contains(target) && !popup.contains(target)) closePopup();
   };
   const escapeHandler = (event: KeyboardEvent) => {
     if (event.key === "Escape") {
@@ -2683,7 +2895,7 @@ function renderWebSearchSwitcher(
     renderPanel(mount, state);
   });
   item.append(
-    el(doc, "span", "web-search-item-icon", enabled ? "🌐" : "＋"),
+    el(doc, "span", "web-search-item-icon", enabled ? "✓" : ""),
     el(doc, "span", "web-search-item-main", "联网"),
     el(doc, "span", "web-search-item-check", enabled ? "✓" : ""),
     el(
@@ -2908,7 +3120,7 @@ function renderYoloToggle(
     renderPanel(mount, state);
   });
   label.append(
-    el(doc, "span", "yolo-toggle-text", "YOLO"),
+    el(doc, "span", "yolo-toggle-text", "自动执行"),
     input,
     el(doc, "span", "yolo-toggle-track"),
   );
@@ -2954,8 +3166,13 @@ function renderInputStatus(
   state: PanelState,
 ) {
   const parts = composeInputStatus(input, state);
+  const cursor = cursorPosition(input.value, input.selectionStart ?? 0);
   const doc = input.ownerDocument!;
   status.replaceChildren();
+  status.title = `行 ${cursor.line}，列 ${cursor.column}`;
+  status.setAttribute("aria-label", status.title);
+  status.classList.toggle("is-empty", parts.length === 0);
+  status.parentElement?.classList.toggle("is-empty", parts.length === 0);
   for (const part of parts) {
     const node = doc.createElement("span");
     if (part.className) node.className = part.className;
@@ -2968,13 +3185,10 @@ function composeInputStatus(
   input: HTMLTextAreaElement,
   state: PanelState,
 ): InputStatusPart[] {
-  const cursor = cursorPosition(input.value, input.selectionStart ?? 0);
   const selected = Math.abs(
     (input.selectionEnd ?? 0) - (input.selectionStart ?? 0),
   );
-  const parts: InputStatusPart[] = [
-    { text: `Ln ${cursor.line}, Col ${cursor.column}` },
-  ];
+  const parts: InputStatusPart[] = [];
   if (selected > 0) {
     parts.push({
       text: `${selected} selected`,
@@ -3295,180 +3509,11 @@ function dataUrlByteSize(dataUrl: string): number {
   return Math.floor(payload.length * 0.75);
 }
 
-async function captureScreenImage(doc: Document): Promise<File | null> {
-  return (
-    (await captureScreenImageWithExternalTool(doc)) ??
-    (await captureScreenImageWithDisplayMedia(doc))
-  );
-}
-
-// Two-tier screenshot capture.
-// Tier 1 — `getDisplayMedia` (this function): the standard browser screen
-// capture API. The user gets the OS screen-picker dialog; we draw a
-// single frame onto a canvas and convert to PNG. Works in modern Zotero
-// XUL builds and is the preferred path.
-// Tier 2 — `captureScreenImageWithExternalTool` (fallback): on Linux,
-// some Zotero builds don't expose getDisplayMedia in the XUL window. We
-// shell out to `gnome-screenshot` / `flameshot` / ImageMagick `import`
-// and read the file back. Each tool exits non-zero if cancelled.
-// INVARIANT: caller (`captureScreenImage`) tries Tier 1 first; Tier 2
-// only runs if Tier 1 returns null. NEVER both — would prompt the user
-// twice.
-async function captureScreenImageWithDisplayMedia(
-  doc: Document,
-): Promise<File | null> {
-  const win = doc.defaultView;
-  const mediaDevices = win?.navigator?.mediaDevices;
-  if (!win || typeof mediaDevices?.getDisplayMedia !== "function") return null;
-
-  let stream: MediaStream | null = null;
-  try {
-    stream = await mediaDevices.getDisplayMedia({ video: true, audio: false });
-    const video = doc.createElement("video");
-    video.muted = true;
-    video.srcObject = stream;
-    await waitForVideoMetadata(video);
-    await video.play().catch(() => undefined);
-
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-    if (!width || !height) return null;
-    const canvas = doc.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d") as CanvasRenderingContext2D | null;
-    if (!context) return null;
-    context.drawImage(video, 0, 0, width, height);
-    const blob = await canvasToBlob(canvas, "image/png");
-    if (!blob) return null;
-    const FileCtor = win.File ?? File;
-    return new FileCtor([blob], `Screenshot ${timestampForFileName()}.png`, {
-      type: "image/png",
-    });
-  } catch (err) {
-    Zotero.debug(
-      `[Zotero AI Sidebar] screenshot capture failed: ${String(err)}`,
-    );
-    return null;
-  } finally {
-    stream?.getTracks().forEach((track) => track.stop());
-  }
-}
-
-async function captureScreenImageWithExternalTool(
-  doc: Document,
-): Promise<File | null> {
-  const Z = Zotero as any;
-  const exec = Z?.Utilities?.Internal?.exec;
-  const getBinary = Z?.File?.getBinaryContentsAsync;
-  const removeIfExists = Z?.File?.removeIfExists;
-  if (typeof exec !== "function" || typeof getBinary !== "function")
-    return null;
-
-  // Tools tried in order of "least disruptive UX first":
-  //   gnome-screenshot -a   — area-select, native GNOME UI
-  //   flameshot gui -p      — area-select, modern annotation overlay
-  //   ImageMagick `import`  — fullscreen capture, last resort
-  // `-p path` / `-f path` write to a fixed temp file we read back. We
-  // remove the temp file on success AND failure (best-effort cleanup).
-  const path = `/tmp/zotero-ai-sidebar-screenshot-${Date.now()}.png`;
-  const commands: Array<[string, string[]]> = [
-    ["/usr/bin/gnome-screenshot", ["-a", "-f", path]],
-    ["/usr/bin/flameshot", ["gui", "-p", path]],
-    ["/usr/bin/import", [path]],
-  ];
-
-  for (const [cmd, args] of commands) {
-    try {
-      const result = await exec(cmd, args);
-      if (result !== true) continue;
-      const file = await imageFileFromPath(doc, path, "Screenshot");
-      if (file) {
-        try {
-          await removeIfExists?.(path);
-        } catch (_err) {
-          // Best-effort cleanup only.
-        }
-        return file;
-      }
-    } catch (err) {
-      Zotero.debug(
-        `[Zotero AI Sidebar] screenshot command failed (${cmd}): ${String(err)}`,
-      );
-    }
-  }
-  try {
-    await removeIfExists?.(path);
-  } catch (_err) {
-    // Best-effort cleanup only.
-  }
-  return null;
-}
-
-async function imageFileFromPath(
-  doc: Document,
-  path: string,
-  fallbackName: string,
-): Promise<File | null> {
-  try {
-    const binary: string = await (Zotero as any).File.getBinaryContentsAsync(
-      path,
-    );
-    if (!binary) return null;
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index++) {
-      bytes[index] = binary.charCodeAt(index) & 0xff;
-    }
-    const name = path.split("/").pop() || `${fallbackName}.png`;
-    const FileCtor = doc.defaultView?.File ?? File;
-    return new FileCtor([bytes], name, { type: "image/png" });
-  } catch (err) {
-    Zotero.debug(
-      `[Zotero AI Sidebar] screenshot file read failed: ${String(err)}`,
-    );
-    return null;
-  }
-}
-
-function waitForVideoMetadata(video: HTMLVideoElement): Promise<void> {
-  const win = video.ownerDocument?.defaultView;
-  return new Promise((resolve, reject) => {
-    if (!win) {
-      reject(new Error("Missing window for screen capture"));
-      return;
-    }
-    const timeoutID = win.setTimeout(
-      () => reject(new Error("Timed out waiting for screen capture")),
-      5000,
-    );
-    video.addEventListener(
-      "loadedmetadata",
-      () => {
-        win.clearTimeout(timeoutID);
-        resolve();
-      },
-      { once: true },
-    );
-    video.addEventListener(
-      "error",
-      () => {
-        win.clearTimeout(timeoutID);
-        reject(new Error("Failed to load screen capture"));
-      },
-      { once: true },
-    );
-  });
-}
-
 function canvasToBlob(
   canvas: HTMLCanvasElement,
   type: string,
 ): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob(resolve, type));
-}
-
-function timestampForFileName(): string {
-  return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
 function countLines(text: string): number {
@@ -3988,7 +4033,8 @@ function pickTranslatePreset(
 
 function paperTitle(itemID: number): string {
   try {
-    return Zotero.Items.get(itemID)?.getField?.("title") || "";
+    const item = Zotero.Items.get(itemID);
+    return item ? item.getField("title") || "" : "";
   } catch {
     return "";
   }
@@ -4756,6 +4802,73 @@ function requestPersistedTabsForItem(
         error: errorMessage(err),
       });
     });
+}
+
+function requestAllPersistedThreads(mount: HTMLElement): void {
+  if (loadedAllPersistedThreads.has(mount)) return;
+  loadedAllPersistedThreads.add(mount);
+
+  void loadAllChatThreads()
+    .then((snapshots) => {
+      if (!mount.isConnected) return;
+      if (snapshots.length === 0) {
+        setHistoryEmptyState(
+          mount,
+          "尚无历史会话",
+          "选择论文后新建会话，发送内容后会自动保存在本机。",
+        );
+        return;
+      }
+
+      const cache = panelStateCache(mount);
+      let loadedItems = loadedPersistedThreads.get(mount);
+      if (!loadedItems) {
+        loadedItems = new Set();
+        loadedPersistedThreads.set(mount, loadedItems);
+      }
+      for (const snapshot of snapshots) {
+        const key = panelStateKey(snapshot.itemID, snapshot.threadID);
+        let threadState = cache.get(key);
+        if (!threadState) {
+          threadState = createPanelState(snapshot.itemID, snapshot.threadID);
+          cache.set(key, threadState);
+        }
+        applyChatThreadSnapshot(threadState, snapshot);
+        loadedItems.add(panelItemKey(snapshot.itemID));
+      }
+
+      if (states.get(mount)) return;
+      const latest = snapshots[0]!;
+      const restored = cache.get(panelStateKey(latest.itemID, latest.threadID));
+      if (!restored) return;
+      setActiveThreadID(mount, restored.itemID, restored.threadID);
+      restored.scrollToBottom = true;
+      states.set(mount, restored);
+      renderPanel(mount, restored);
+    })
+    .catch((err) => {
+      loadedAllPersistedThreads.delete(mount);
+      setHistoryEmptyState(
+        mount,
+        "历史会话读取失败",
+        "请重新打开侧栏；若仍失败，可在调试日志中查看原因。",
+      );
+      debugZai("sidebar.all-persisted-tabs.load.failed", {
+        path: chatHistoryPath(),
+        error: errorMessage(err),
+      });
+    });
+}
+
+function setHistoryEmptyState(
+  mount: HTMLElement,
+  title: string,
+  detail: string,
+): void {
+  const titleNode = mount.querySelector(".zai-history-empty-title");
+  const detailNode = mount.querySelector(".zai-history-empty-detail");
+  if (titleNode) titleNode.textContent = title;
+  if (detailNode) detailNode.textContent = detail;
 }
 
 function applyChatThreadSnapshot(
@@ -7774,11 +7887,11 @@ function renderToolTrace(
 //
 // Supported subset (block):
 //   #/##/###/#### headings, ordered+unordered lists (no nesting),
-//   ```fence``` code blocks, > blockquote, paragraphs.
-// NOT supported: tables, HR, image syntax, nested lists, setext headings.
+//   ```fence``` code blocks, > blockquote, GFM pipe tables, HR, paragraphs.
+// NOT supported: image syntax, nested lists, setext headings.
 // REF: Claudian's MessageRenderer (similar minimal subset for the same
 //      streaming reasons); CommonMark spec we deliberately don't follow.
-function renderMarkdownInto(
+export function renderMarkdownInto(
   target: HTMLElement,
   markdown: string,
   mathMode: MathRenderMode = "html",
@@ -7811,14 +7924,24 @@ function renderMarkdownInto(
     list = null;
   };
 
-  const appendListItem = (text: string, ordered: boolean) => {
+  const appendListItem = (
+    text: string,
+    ordered: boolean,
+    explicitNumber?: number,
+  ) => {
     flushParagraph();
     const tag = ordered ? "ol" : "ul";
     if (!list || list.tagName.toLowerCase() !== tag) {
       list = doc.createElement(tag);
+      if (ordered && explicitNumber != null) {
+        (list as HTMLOListElement).start = explicitNumber;
+      }
       target.append(list);
     }
     const li = doc.createElement("li");
+    if (ordered && explicitNumber != null) {
+      (li as HTMLLIElement).value = explicitNumber;
+    }
     appendInlineMarkdown(li, text, mathMode);
     list.append(li);
   };
@@ -7838,7 +7961,8 @@ function renderMarkdownInto(
     codeLanguage = "";
   };
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex]!;
     if (line.startsWith("```")) {
       if (codeLines == null) {
         flushParagraph();
@@ -7859,6 +7983,22 @@ function renderMarkdownInto(
     if (!line.trim()) {
       flushParagraph();
       flushList();
+      continue;
+    }
+
+    if (isMarkdownHorizontalRule(line)) {
+      flushParagraph();
+      flushList();
+      target.append(doc.createElement("hr"));
+      continue;
+    }
+
+    const table = parseMarkdownTable(lines, lineIndex);
+    if (table) {
+      flushParagraph();
+      flushList();
+      appendMarkdownTable(target, table, mathMode);
+      lineIndex = table.nextLineIndex - 1;
       continue;
     }
 
@@ -7884,7 +8024,7 @@ function renderMarkdownInto(
 
     const ordered = orderedListText(line);
     if (ordered != null) {
-      appendListItem(ordered, true);
+      appendListItem(ordered.text, true, ordered.number);
       continue;
     }
 
@@ -7902,6 +8042,54 @@ function renderMarkdownInto(
 
   flushCode();
   flushParagraph();
+}
+
+function appendMarkdownTable(
+  target: HTMLElement,
+  markdownTable: MarkdownTable,
+  mathMode: MathRenderMode,
+): void {
+  const doc = target.ownerDocument!;
+  const scroll = doc.createElement("div");
+  scroll.className = "markdown-table-scroll";
+  const table = doc.createElement("table");
+  const thead = doc.createElement("thead");
+  const headerRow = doc.createElement("tr");
+
+  for (let index = 0; index < markdownTable.header.length; index++) {
+    const th = doc.createElement("th");
+    th.setAttribute("scope", "col");
+    setMarkdownTableAlignment(th, markdownTable.alignments[index] ?? null);
+    appendInlineMarkdown(th, markdownTable.header[index] ?? "", mathMode);
+    headerRow.append(th);
+  }
+  thead.append(headerRow);
+  table.append(thead);
+
+  if (markdownTable.rows.length > 0) {
+    const tbody = doc.createElement("tbody");
+    for (const sourceRow of markdownTable.rows) {
+      const row = doc.createElement("tr");
+      for (let index = 0; index < markdownTable.header.length; index++) {
+        const td = doc.createElement("td");
+        setMarkdownTableAlignment(td, markdownTable.alignments[index] ?? null);
+        appendInlineMarkdown(td, sourceRow[index] ?? "", mathMode);
+        row.append(td);
+      }
+      tbody.append(row);
+    }
+    table.append(tbody);
+  }
+
+  scroll.append(table);
+  target.append(scroll);
+}
+
+function setMarkdownTableAlignment(
+  cell: HTMLTableCellElement,
+  alignment: MarkdownTableAlignment,
+): void {
+  if (alignment) cell.dataset.align = alignment;
 }
 
 // Walks `<p>`'s children, splitting at direct child blocks so display
@@ -7954,7 +8142,8 @@ function isHoistableInlineRenderBlock(node: Node): boolean {
   );
 }
 
-// Inline markdown: `code`, **bold**, [label](url).
+// Inline markdown: `code`, **bold**, *italic*, [label](url), and backslash
+// escapes for ASCII punctuation.
 // Streaming-safe pattern: at each step we look for the EARLIEST opening
 // delimiter; if its closing partner is not yet in the buffer, we emit the
 // rest as literal text and return. WHY: during streaming, the next chunk
@@ -7983,13 +8172,17 @@ function appendInlineMarkdown(
     // chat, KaTeX MathML for older note paths, or a plain
     // <span class="math">$..$</span> wrapper that Better Notes recognizes.
     const math = findNextMathRegion(text, cursor);
+    const escapeStart = findNextMarkdownEscape(text, cursor);
     const codeStart = text.indexOf("`", cursor);
     const boldStart = text.indexOf("**", cursor);
+    const italic = findNextItalicRegion(text, cursor);
     const linkStart = text.indexOf("[", cursor);
     const starts = [
       math ? math.start : -1,
+      escapeStart,
       codeStart,
       boldStart,
+      italic ? italic.start : -1,
       linkStart,
     ].filter((index) => index >= 0);
     const next = starts.length ? Math.min(...starts) : -1;
@@ -8005,6 +8198,12 @@ function appendInlineMarkdown(
     if (math && next === math.start) {
       renderMathInto(parent, math, mathMode);
       cursor = math.end;
+      continue;
+    }
+
+    if (next === escapeStart) {
+      parent.append(doc.createTextNode(text[next + 1] ?? ""));
+      cursor = next + 2;
       continue;
     }
 
@@ -8049,6 +8248,18 @@ function appendInlineMarkdown(
       continue;
     }
 
+    if (italic && next === italic.start) {
+      const em = doc.createElement("em");
+      appendInlineMarkdown(
+        em,
+        text.slice(italic.start + 1, italic.end),
+        mathMode,
+      );
+      parent.append(em);
+      cursor = italic.end + 1;
+      continue;
+    }
+
     const link = parseMarkdownLink(text, next);
     if (!link) {
       parent.append(doc.createTextNode(text[next]));
@@ -8068,6 +8279,84 @@ function appendInlineMarkdown(
   }
 }
 
+function isMarkdownHorizontalRule(line: string): boolean {
+  const compact = line.trim().replace(/[ \t]/g, "");
+  if (compact.length < 3) return false;
+  const marker = compact[0];
+  if (marker !== "-" && marker !== "*" && marker !== "_") return false;
+  return Array.from(compact).every((char) => char === marker);
+}
+
+function findNextMarkdownEscape(text: string, cursor: number): number {
+  for (let index = text.indexOf("\\", cursor); index >= 0; ) {
+    const escaped = text[index + 1];
+    if (escaped && isAsciiPunctuation(escaped)) return index;
+    index = text.indexOf("\\", index + 1);
+  }
+  return -1;
+}
+
+function isAsciiPunctuation(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return (
+    (code >= 33 && code <= 47) ||
+    (code >= 58 && code <= 64) ||
+    (code >= 91 && code <= 96) ||
+    (code >= 123 && code <= 126)
+  );
+}
+
+function findNextItalicRegion(
+  text: string,
+  cursor: number,
+): { start: number; end: number } | null {
+  for (let start = text.indexOf("*", cursor); start >= 0; ) {
+    const next = text[start + 1];
+    if (
+      !isEscapedMarkdownCharacter(text, start) &&
+      text[start - 1] !== "*" &&
+      next !== "*" &&
+      next != null &&
+      !isInlineWhitespace(next)
+    ) {
+      const end = findClosingItalicMarker(text, start + 1);
+      // Streaming safety: preserve an otherwise-valid unmatched opener as
+      // literal text until a later chunk supplies its closing marker.
+      if (end < 0) return null;
+      return { start, end };
+    }
+    start = text.indexOf("*", start + 1);
+  }
+  return null;
+}
+
+function findClosingItalicMarker(text: string, cursor: number): number {
+  for (let end = text.indexOf("*", cursor); end >= 0; ) {
+    if (
+      !isEscapedMarkdownCharacter(text, end) &&
+      text[end - 1] !== "*" &&
+      text[end + 1] !== "*" &&
+      !isInlineWhitespace(text[end - 1] ?? " ")
+    ) {
+      return end;
+    }
+    end = text.indexOf("*", end + 1);
+  }
+  return -1;
+}
+
+function isEscapedMarkdownCharacter(text: string, index: number): boolean {
+  let slashCount = 0;
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor--) {
+    slashCount += 1;
+  }
+  return slashCount % 2 === 1;
+}
+
+function isInlineWhitespace(char: string): boolean {
+  return char === " " || char === "\t" || char === "\n" || char === "\r";
+}
+
 function markdownHeadingLevel(line: string): number {
   let level = 0;
   while (level < line.length && line[level] === "#") level++;
@@ -8081,13 +8370,17 @@ function unorderedListText(line: string): string | null {
   return null;
 }
 
-function orderedListText(line: string): string | null {
+function orderedListText(
+  line: string,
+): { text: string; number: number } | null {
   const trimmed = trimListIndent(line);
   let index = 0;
   while (index < trimmed.length && isDigit(trimmed[index])) index++;
   if (index === 0 || trimmed[index] !== "." || trimmed[index + 1] !== " ")
     return null;
-  return trimmed.slice(index + 2).trim();
+  const number = Number(trimmed.slice(0, index));
+  if (!Number.isSafeInteger(number) || number < 0) return null;
+  return { text: trimmed.slice(index + 2).trim(), number };
 }
 
 function trimListIndent(line: string): string {
@@ -8274,7 +8567,7 @@ function formatConversationMarkdown(
   includeDebugContext: boolean,
 ): string {
   const item = state.itemID == null ? null : Zotero.Items.get(state.itemID);
-  const title = item?.getField("title") || "未选择条目";
+  const title = item ? item.getField("title") || "未选择条目" : "未选择条目";
   const lines = [
     `# Zotero AI Chat - ${title}`,
     "",
@@ -8345,7 +8638,7 @@ function parseYearString(date: string): string {
 
 function formatImageAttachmentSummary(message: Message): string {
   if (!message.images?.length) return "";
-  const lines = ["### 截图附件"];
+  const lines = ["### 图片附件"];
   message.images.forEach((image, index) => {
     lines.push(
       `- ${index + 1}. ${image.name} (${image.mediaType}, ${formatBytes(image.size)})`,

@@ -79,8 +79,10 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: zotero-ai-sidebar-${{ env.RELEASE_TAG }}
-          path: .scaffold/build/*.xpi
+          name: zotero-ai-companion-${{ env.RELEASE_TAG }}
+          path: |
+            .scaffold/build/*.xpi
+            .scaffold/build/update*.json
           if-no-files-found: error
 
       - name: Publish version release
@@ -94,11 +96,26 @@ jobs:
             args=(
               release create "$RELEASE_TAG"
               .scaffold/build/*.xpi
-              --title "Zotero AI Sidebar $RELEASE_TAG"
+              --title "Zotero AI Companion $RELEASE_TAG"
               --generate-notes
             )
             if [ "$IS_PRERELEASE" = "true" ]; then
               args+=(--prerelease)
             fi
             gh "${args[@]}"
+          fi
+
+      - name: Publish Zotero update channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view release >/dev/null 2>&1; then
+            gh release upload release .scaffold/build/update.json .scaffold/build/update-beta.json --clobber
+          else
+            gh release create release \
+              .scaffold/build/update.json \
+              .scaffold/build/update-beta.json \
+              --title "Zotero AI Companion Update Channel" \
+              --notes "Machine-readable Zotero update manifests. Install releases from the versioned release pages." \
+              --latest=false
           fi

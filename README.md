@@ -1,8 +1,8 @@
-# Zotero AI Sidebar
+# Zotero AI Companion
 
 [中文](README.md) | [English](README.en.md)
 
-把论文阅读时最常用的几件事放回 Zotero：提问、点译、全文翻译、整理笔记、截图追问。
+把论文阅读时最常用的几件事放回 Zotero：提问、点译、全文翻译、整理笔记、图片追问。
 
 这个插件不是一个单独的聊天窗口，而是 Zotero 右侧的一条阅读侧栏。你打开 PDF，它跟着当前论文走；你问的问题、点译的段落、整理出来的笔记，也都留在这篇论文下面。
 
@@ -14,11 +14,11 @@
 
 - 复制一段 PDF 文字去翻译；
 - 把摘要、标题、选区复制给聊天工具；
-- 截图问图表含义；
+- 上传或粘贴图片询问图表含义；
 - 把回答再搬回 Zotero 笔记；
 - 换电脑后发现之前的对话不在了。
 
-Zotero AI Sidebar 主要就是把这些动作收回来。你仍然在 Zotero 里读 PDF，只是在右侧多了一块可以理解当前论文上下文的侧栏。
+Zotero AI Companion 主要就是把这些动作收回来。你仍然在 Zotero 里读 PDF，只是在右侧多了一块可以理解当前论文上下文的侧栏。
 
 ## 怎么读起来
 
@@ -64,21 +64,32 @@ Zotero AI Sidebar 主要就是把这些动作收回来。你仍然在 Zotero 里
 - `全文重点`：读完整篇 PDF，整理值得标记的重点。
 - `解释选区`：选中 PDF 文字后，围绕选区提问。
 - `队列`：查看还没处理完，或之前已经完成的任务。
-- `截图` / `图片`：把图表、公式、界面状态一起发给模型。
+- `图片`：上传图表或公式；也可以用系统截图后在输入框按 `Ctrl+V` 粘贴。
 - `联网`：需要查当前论文之外的信息时再打开。
 
 底部也可以切换模型、推理等级和 YOLO 模式。API Key 和模型配置都保存在 Zotero 本地偏好里。
 
 ## 安装
 
-1. 从 [GitHub Releases](https://github.com/huangkiki/zotero-ai-sidebar/releases/latest) 下载最新版 `zotero-ai-sidebar.xpi`。
-2. 打开 Zotero 7、8 或 9。
-3. 进入 `工具` -> `插件`。
-4. 点击齿轮图标，选择 `从文件安装插件...`。
-5. 选择刚下载的 `.xpi` 文件，按提示重启 Zotero。
-6. 在侧栏设置里配置一个模型预设。
+1. 打开 Zotero 的 `工具` -> `插件`，先卸载或禁用 ID 为 `zotero-ai-sidebar@local` 或 `zotero-ai-sidebar@huangkiki` 的旧版插件。
+2. 从 [GitHub Releases](https://github.com/Dennis-Huangm/zotero-ai-companion/releases/latest) 下载最新版 `zotero-ai-companion.xpi`。
+3. 点击齿轮图标，选择 `从文件安装插件...`。
+4. 选择刚下载的 `.xpi` 文件，按提示重启 Zotero 7、8、9 或 10。
+5. 在侧栏设置里配置一个模型预设。
 
-目前只发布 `.xpi` 文件，暂时没有 Zotero 自动更新清单。更新时重新安装最新版 `.xpi` 即可。
+从 `1.0.0` 起，插件使用独立 ID `zotero-ai-companion@dennis-huangm.github.io`，并从 `Dennis-Huangm/zotero-ai-companion` 的固定更新通道自动获取新版本。模型偏好前缀与聊天历史文件保持不变，因此迁移不会清空已有配置或历史。请勿同时启用旧 ID 插件，否则两者会重复注入侧栏。
+
+同一个 XPI 支持 Zotero 7–10；Zotero 10 的适配审计和实机检查清单见
+[`docs/ZOTERO_10_COMPATIBILITY.md`](docs/ZOTERO_10_COMPATIBILITY.md)。
+Windows 运行时路径和平台清理说明见
+[`docs/WINDOWS_SUPPORT.md`](docs/WINDOWS_SUPPORT.md)。
+
+## 聊天记录
+
+发送消息后，会话会自动保存到 Zotero 数据目录下的
+`zotero-ai-sidebar-chat-history.json`。重新打开 Zotero 时，侧栏会自动恢复最近一次会话。点击顶部“历史记录”进入独立历史页，可在“全部”和“当前论文”之间切换、重命名或删除记录。输入框上方不再显示会话标签栏，“＋ 新对话”位于底部工具栏。
+
+旧版本保存在 Zotero profile 目录中的历史文件会在首次读取时自动迁移。若准备从旧版本升级但当前会话尚未落盘，建议先点击顶部“复制”保留一份 Markdown。
 
 ## 配置模型
 
@@ -99,7 +110,7 @@ Zotero AI Sidebar 主要就是把这些动作收回来。你仍然在 Zotero 里
 - 点译段落，并复用全文翻译缓存。
 - 把回答复制成 Markdown，或写入 Zotero 子笔记。
 - 按自定义颜色规则起草 PDF 注释。
-- 支持截图、图片、快捷提示词和 slash 命令。
+- 支持图片上传、剪贴板粘贴、快捷提示词和 slash 命令。
 - 支持 arXiv 检索和全文抓取。
 - 支持 WebDAV 同步聊天、提示词、设置和选定注释。
 - 支持 JSON 配置备份与恢复。
@@ -138,7 +149,7 @@ flowchart LR
         Note[笔记]
         Side[侧栏]
     end
-    User([读者]) -->|提问 / 选区 / 截图| Side
+    User([读者]) -->|提问 / 选区 / 图片| Side
     Side -->|工具调用| Tools[本地 Zotero 工具]
     Tools -->|读 / 写| Zotero
     Side <-->|HTTPS| Provider[OpenAI / Anthropic /<br/>OpenAI 兼容端点]

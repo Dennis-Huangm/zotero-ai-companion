@@ -1,8 +1,8 @@
-# Zotero AI Sidebar
+# Zotero AI Companion
 
 [中文](README.md) | [English](README.en.md)
 
-Keep the small paper-reading tasks inside Zotero: ask questions, translate a paragraph, translate the full PDF, turn answers into notes, and send screenshots when text is not enough.
+Keep the small paper-reading tasks inside Zotero: ask questions, translate a paragraph, translate the full PDF, turn answers into notes, and attach images when text is not enough.
 
 This is not a separate chat app. It is a sidebar next to Zotero's PDF reader. The sidebar follows the current paper, and the conversation stays attached to that paper.
 
@@ -14,11 +14,11 @@ Reading a paper often means interrupting yourself:
 
 - copy a PDF paragraph into a translation tool;
 - copy title, abstract, and selected text into a chat app;
-- send a screenshot to ask about a figure;
+- upload or paste an image to ask about a figure;
 - move the answer back into a Zotero note;
 - switch machines and lose the context of what you asked.
 
-Zotero AI Sidebar is built around that loop. You keep reading in Zotero, with a sidebar that can use the current paper as context.
+Zotero AI Companion is built around that loop. You keep reading in Zotero, with a sidebar that can use the current paper as context.
 
 ## How It Feels In Use
 
@@ -71,14 +71,38 @@ The footer also lets you switch model, reasoning level, and YOLO mode. API keys 
 
 ## Install
 
-1. Download the latest `zotero-ai-sidebar.xpi` from [GitHub Releases](https://github.com/huangkiki/zotero-ai-sidebar/releases/latest).
-2. Open Zotero 7, 8, or 9.
-3. Go to `Tools` -> `Plugins`.
-4. Click the gear icon and choose `Install Plugin From File...`.
-5. Select the downloaded `.xpi` file and restart Zotero if prompted.
-6. Configure at least one model preset in the sidebar settings.
+1. Open `Tools` -> `Plugins` and first remove or disable old plug-ins with ID `zotero-ai-sidebar@local` or `zotero-ai-sidebar@huangkiki`.
+2. Download the latest `zotero-ai-companion.xpi` from [GitHub Releases](https://github.com/Dennis-Huangm/zotero-ai-companion/releases/latest).
+3. Click the gear icon and choose `Install Plugin From File...`.
+4. Select the downloaded `.xpi` and restart Zotero 7, 8, 9, or 10 if prompted.
+5. Configure at least one model preset in the sidebar settings.
 
-The repository currently publishes only the `.xpi` file. Zotero automatic update manifests are not published yet.
+Starting with `1.0.0`, the plug-in uses the independent ID
+`zotero-ai-companion@dennis-huangm.github.io` and receives automatic updates
+from the fixed release channel in `Dennis-Huangm/zotero-ai-companion`.
+Preference keys and the history filename remain unchanged, so migration does
+not clear existing configuration or history. Do not enable an old-ID plug-in at
+the same time, because both would inject the sidebar.
+
+The same XPI supports Zotero 7–10. See
+[`docs/ZOTERO_10_COMPATIBILITY.md`](docs/ZOTERO_10_COMPATIBILITY.md) for the
+Zotero 10 compatibility audit and manual smoke-test checklist.
+See [`docs/WINDOWS_SUPPORT.md`](docs/WINDOWS_SUPPORT.md) for Windows runtime
+paths and platform-cleanup details.
+
+## Chat History
+
+After a message is sent, the conversation is saved automatically to
+`zotero-ai-sidebar-chat-history.json` in the Zotero data directory. On the
+next launch, the sidebar restores the most recently updated conversation. Use
+the top `History` button to open the dedicated history page, switch between all
+conversations and conversations for the current paper, and rename or delete
+records. The composer no longer has a chat-tab row; `+ New Chat` is in the
+footer toolbar.
+
+History files created in the Zotero profile directory by older versions are
+migrated automatically. Before upgrading from a version that failed to persist
+the current in-memory chat, use the top `Copy` button to keep a Markdown copy.
 
 ## Model Setup
 
@@ -99,7 +123,7 @@ Do not commit API keys, base URLs, or private model names.
 - Translate clicked paragraphs and reuse full-text translation cache.
 - Copy answers as Markdown or write them into Zotero child notes.
 - Draft PDF annotations using customizable color guidance.
-- Use screenshots, images, quick prompts, and slash commands.
+- Use image uploads, clipboard paste, quick prompts, and slash commands.
 - Search arXiv and fetch paper full text.
 - Sync chats, prompts, settings, and selected annotations with WebDAV.
 - Export and restore settings as JSON.
@@ -138,7 +162,7 @@ flowchart LR
         Note[Notes]
         Side[Sidebar]
     end
-    User([Reader]) -->|prompt / selection / screenshot| Side
+    User([Reader]) -->|prompt / selection / image| Side
     Side -->|tool calls| Tools[Local Zotero tools]
     Tools -->|read / write| Zotero
     Side <-->|HTTPS| Provider[OpenAI / Anthropic /<br/>OpenAI-compatible]

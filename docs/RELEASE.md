@@ -1,6 +1,6 @@
 # Release Flow
 
-This project releases XPI files from Git tags. The local machine only commits and pushes a tag; GitHub Actions builds and publishes the XPI asset.
+This project releases XPI files from Git tags. GitHub Actions publishes the versioned XPI and refreshes a stable Zotero update channel.
 
 ## One-time setup
 
@@ -61,7 +61,8 @@ When the tag reaches GitHub, `.github/workflows/release.yml` automatically runs:
 - `npm ci`
 - `npm test`
 - `npm run build`
-- uploads only `.scaffold/build/*.xpi` to the version release
+- uploads `.scaffold/build/zotero-ai-companion.xpi` to the version release
+- refreshes `update.json` and `update-beta.json` on the fixed `release` release
 
 ## Manual release from GitHub UI
 
@@ -70,6 +71,6 @@ The same workflow also supports `workflow_dispatch`. Run **Release XPI** in GitH
 ## Notes
 
 - Do not commit local XPI build artifacts. `*.xpi` is ignored by `.gitignore`.
-- This simplified release flow does not publish Zotero auto-update manifests.
+- Zotero checks `https://github.com/Dennis-Huangm/zotero-ai-companion/releases/download/release/update.json` for stable updates.
 - Local provider configuration such as API keys, Base URL, and model IDs stays in Zotero prefs, not source code.
 - Release tags should start with `v`, for example `v0.1.0`.
