@@ -3157,18 +3157,18 @@ button:disabled,
   box-shadow: 0 8px 24px rgba(31, 35, 40, 0.14);
 }
 
-.web-search-popup.web-search-popup-composer {
-  left: 12px;
-  right: 12px;
-  bottom: 44px;
-  z-index: 500;
-  width: auto;
-  max-width: none;
+.web-search-popup.web-search-popup-portal {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  z-index: 2147483646;
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
   max-height: 190px;
   overflow-y: auto;
 }
 
-.web-search-popup.web-search-popup-composer .web-search-item {
+.web-search-popup.web-search-popup-portal .web-search-item {
   width: 100%;
 }
 

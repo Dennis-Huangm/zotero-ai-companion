@@ -1,7 +1,7 @@
 {
   "name": "zotero-ai-companion",
   "type": "module",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "AI reading companion for Zotero with chat, translation, notes, tools, and conversation history.",
   "config": {
     "addonName": "Zotero AI Companion",

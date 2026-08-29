@@ -2973,23 +2973,30 @@ function renderWebSearchSwitcher(
   const closePopup = () => {
     if (popup.style.display === "none") return;
     popup.style.display = "none";
-    popup.classList.remove("web-search-popup-composer");
+    popup.classList.remove("web-search-popup-portal");
+    popup.style.removeProperty("left");
+    popup.style.removeProperty("top");
+    popup.style.removeProperty("width");
     if (popup.parentElement !== wrap) wrap.append(popup);
     trigger.setAttribute("aria-expanded", "false");
     doc.removeEventListener("mousedown", outsideHandler, true);
     doc.removeEventListener("keydown", escapeHandler, true);
+    doc.removeEventListener("scroll", viewportHandler, true);
+    doc.defaultView?.removeEventListener("resize", viewportHandler);
   };
   const openPopup = () => {
     if (popup.style.display !== "none") return;
-    const composer = wrap.closest(".composer");
-    if (composer) {
-      popup.classList.add("web-search-popup-composer");
-      composer.append(popup);
-    }
+    const portalRoot = doc.documentElement ?? doc.body;
+    if (!portalRoot) return;
+    popup.classList.add("web-search-popup-portal");
+    portalRoot.append(popup);
     popup.style.display = "";
+    positionWebSearchPopup(doc, trigger, popup);
     trigger.setAttribute("aria-expanded", "true");
     doc.addEventListener("mousedown", outsideHandler, true);
     doc.addEventListener("keydown", escapeHandler, true);
+    doc.addEventListener("scroll", viewportHandler, true);
+    doc.defaultView?.addEventListener("resize", viewportHandler);
   };
   const outsideHandler = (event: Event) => {
     const target = event.target as Node;
@@ -3001,6 +3008,7 @@ function renderWebSearchSwitcher(
       trigger.focus();
     }
   };
+  const viewportHandler = () => closePopup();
 
   const item = doc.createElement("button");
   item.type = "button";
@@ -3037,6 +3045,41 @@ function renderWebSearchSwitcher(
 
   wrap.append(trigger, popup);
   return wrap;
+}
+
+function positionWebSearchPopup(
+  doc: Document,
+  trigger: HTMLElement,
+  popup: HTMLElement,
+): void {
+  const root = doc.documentElement;
+  const viewportWidth =
+    root?.clientWidth || doc.defaultView?.innerWidth || 320;
+  const viewportHeight =
+    root?.clientHeight || doc.defaultView?.innerHeight || 480;
+  const margin = 8;
+  const gap = 8;
+  const width = Math.min(240, Math.max(180, viewportWidth - margin * 2));
+  const triggerRect = trigger.getBoundingClientRect();
+
+  popup.style.width = `${width}px`;
+  popup.style.left = `${Math.max(
+    margin,
+    Math.min(triggerRect.left, viewportWidth - width - margin),
+  )}px`;
+  popup.style.top = "0px";
+
+  const popupHeight = Math.max(popup.getBoundingClientRect().height, 54);
+  const above = triggerRect.top - popupHeight - gap;
+  const below = triggerRect.bottom + gap;
+  const top =
+    above >= margin
+      ? above
+      : Math.max(
+          margin,
+          Math.min(below, viewportHeight - popupHeight - margin),
+        );
+  popup.style.top = `${top}px`;
 }
 
 function webSearchToggleTitle(mode: WebSearchMode): string {
