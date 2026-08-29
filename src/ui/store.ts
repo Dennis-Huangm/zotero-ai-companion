@@ -1,4 +1,5 @@
 import type { Message } from '../providers/types';
+import { sanitizeCitationArtifacts } from '../utils/citations';
 
 export interface InProgress {
   role: 'assistant';
@@ -39,7 +40,13 @@ export function reducer(s: ChatState, a: ChatAction): ChatState {
       return { ...s, inProgress: { role: 'assistant', content: '' } };
     case 'assistant_text':
       if (!s.inProgress) return s;
-      return { ...s, inProgress: { ...s.inProgress, content: s.inProgress.content + a.text } };
+      return {
+        ...s,
+        inProgress: {
+          ...s.inProgress,
+          content: sanitizeCitationArtifacts(s.inProgress.content + a.text),
+        },
+      };
     case 'assistant_thinking':
       if (!s.inProgress) return s;
       return {

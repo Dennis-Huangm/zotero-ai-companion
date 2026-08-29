@@ -4,6 +4,7 @@ import type {
   Message,
 } from "../providers/types";
 import { joinPlatformPath } from "../utils/file-path";
+import { sanitizeCitationArtifacts } from "../utils/citations";
 
 // Per-Zotero-item chat persistence.
 //
@@ -358,9 +359,9 @@ function normalizeMessages(value: unknown): Message[] {
     return [
       {
         role: m.role,
-        content: m.content,
+        content: sanitizeCitationArtifacts(m.content),
         ...(typeof m.thinking === "string" && m.thinking
-          ? { thinking: m.thinking }
+          ? { thinking: sanitizeCitationArtifacts(m.thinking) }
           : {}),
         ...(images.length ? { images } : {}),
         ...(isRecord(m.context)

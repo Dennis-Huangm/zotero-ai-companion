@@ -80,6 +80,7 @@ import {
   renderMathInto,
   type MathRenderMode,
 } from "../ui/math";
+import { sanitizeCitationArtifacts } from "../utils/citations";
 import {
   parseMarkdownTable,
   type MarkdownTable,
@@ -4613,6 +4614,10 @@ async function streamAssistant(
     updateMessageBubble(mount, state, assistantIndex, assistant);
   } finally {
     toolSession?.dispose();
+    assistant.content = sanitizeCitationArtifacts(assistant.content);
+    if (assistant.thinking) {
+      assistant.thinking = sanitizeCitationArtifacts(assistant.thinking);
+    }
     markMessageTaskCompleted(userMessage);
     if (options.annotationSnapshot) {
       attachAnnotationDraft(
@@ -8064,7 +8069,9 @@ export function renderMarkdownInto(
 ) {
   const doc = target.ownerDocument!;
   target.replaceChildren();
-  const normalized = markdown.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+  const normalized = sanitizeCitationArtifacts(markdown)
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\r", "\n");
   const lines = normalized.split("\n");
   let paragraph: string[] = [];
   let list: HTMLElement | null = null;

@@ -66,7 +66,29 @@ vi.mock('openai', () => {
             };
             yield {
               type: 'response.output_text.delta',
-              delta: 'Web result',
+              delta: 'Web result\uE200cite\uE202turn0search0\uE201',
+            };
+            yield {
+              type: 'response.output_item.done',
+              item: {
+                type: 'message',
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: 'Web result',
+                    annotations: [
+                      {
+                        type: 'url_citation',
+                        start_index: 0,
+                        end_index: 10,
+                        url: 'https://example.test/paper',
+                        title: 'Example paper',
+                      },
+                    ],
+                  },
+                ],
+              },
             };
             yield {
               type: 'response.completed',
@@ -313,7 +335,14 @@ describe('OpenAIProvider', () => {
         status: 'completed',
         summary: 'MCP 工具列表已获取: 1 个工具',
       },
-      { type: 'text_delta', text: 'Web result' },
+      {
+        type: 'text_delta',
+        text: 'Web result\uE200cite\uE202turn0search0\uE201',
+      },
+      {
+        type: 'text_delta',
+        text: '\n\n### 来源\n\n1. [Example paper](https://example.test/paper)',
+      },
       { type: 'usage', input: 11, output: 3, cacheRead: 0 },
     ]);
   });

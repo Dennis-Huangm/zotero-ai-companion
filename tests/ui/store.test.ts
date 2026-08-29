@@ -2,6 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { reducer, initialState } from '../../src/ui/store';
 
 describe('chat reducer', () => {
+  it('removes leaked citation markers while streaming assistant text', () => {
+    let state = reducer(initialState, { type: 'assistant_start' });
+    state = reducer(state, {
+      type: 'assistant_text',
+      text: '回答\uE200cite\uE202turn0search0\uE201',
+    });
+    expect(state.inProgress?.content).toBe('回答');
+  });
+
   it('appends user message on user_send', () => {
     const s = reducer(initialState, { type: 'user_send', content: 'hi' });
     expect(s.messages).toEqual([{ role: 'user', content: 'hi' }]);

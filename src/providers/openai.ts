@@ -14,6 +14,10 @@ import type {
 } from "../settings/types";
 import type { ToolSettings } from "../settings/tool-settings";
 import { DEFAULT_CONTEXT_POLICY } from "../context/policy";
+import {
+  formatUrlCitationSources,
+  type UrlCitation,
+} from "../utils/citations";
 
 const OPENAI_REQUEST_TIMEOUT_MS = 120_000;
 const OPENAI_FIRST_EVENT_TIMEOUT_MS = 60_000;
@@ -50,6 +54,7 @@ type ResponseEvent = {
   item_id?: string;
   message?: string;
   item?: ResponseOutputItemLike;
+  annotation?: ResponseTextAnnotationLike;
   response?: {
     error?: { message?: string } | null;
     usage?: ResponseUsage;
@@ -74,7 +79,20 @@ export interface ResponseFunctionCallLike {
 interface ResponseMessageLike {
   type: "message";
   role?: "assistant";
-  content?: Array<{ type?: string; text?: string; refusal?: string }>;
+  content?: Array<{
+    type?: string;
+    text?: string;
+    refusal?: string;
+    annotations?: ResponseTextAnnotationLike[];
+  }>;
+}
+
+interface ResponseTextAnnotationLike {
+  type?: string;
+  url?: string;
+  title?: string;
+  start_index?: number;
+  end_index?: number;
 }
 
 interface ResponseReasoningLike {
@@ -219,6 +237,7 @@ export class OpenAIProvider implements Provider {
 
       const output: ResponseOutputItemLike[] = [];
       const calls: ResponseFunctionCallLike[] = [];
+      const citations = new Map<string, UrlCitation>();
       let usage: ResponseUsage | undefined;
       let failed = false;
 
@@ -251,10 +270,14 @@ export class OpenAIProvider implements Provider {
             case "response.output_item.done":
               if (e.item) {
                 output.push(e.item);
+                collectUrlCitations(e.item, citations);
                 if (isFunctionCall(e.item)) calls.push(e.item);
                 const hostedChunk = hostedOutputItemToChunk(e.item);
                 if (hostedChunk) yield hostedChunk;
               }
+              break;
+            case "response.output_text.annotation.added":
+              collectUrlCitation(e.annotation, citations);
               break;
             case "response.web_search_call.in_progress":
               yield {
@@ -305,6 +328,8 @@ export class OpenAIProvider implements Provider {
 
       // Natural exit: model produced text-only output. No tool calls ⇒ done.
       if (calls.length === 0) {
+        const sources = formatUrlCitationSources(Array.from(citations.values()));
+        if (sources) yield { type: "text_delta", text: sources };
         if (usage) yield usageChunk(usage);
         return;
       }
@@ -511,6 +536,37 @@ function hostedOutputItemToChunk(
     };
   }
   return null;
+}
+
+function collectUrlCitations(
+  item: ResponseOutputItemLike,
+  citations: Map<string, UrlCitation>,
+): void {
+  if (item.type !== "message") return;
+  for (const part of item.content ?? []) {
+    for (const annotation of part.annotations ?? []) {
+      collectUrlCitation(annotation, citations);
+    }
+  }
+}
+
+function collectUrlCitation(
+  annotation: ResponseTextAnnotationLike | undefined,
+  citations: Map<string, UrlCitation>,
+): void {
+  if (
+    annotation?.type !== "url_citation" ||
+    typeof annotation.url !== "string" ||
+    !annotation.url
+  ) {
+    return;
+  }
+  citations.set(annotation.url, {
+    url: annotation.url,
+    ...(typeof annotation.title === "string" && annotation.title
+      ? { title: annotation.title }
+      : {}),
+  });
 }
 
 export function toOpenAIInput(messages: Message[]): unknown[] {
