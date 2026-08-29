@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   filterChatHistorySnapshots,
+  latestChatThreadSnapshot,
   type ChatThreadSnapshot,
 } from "../../src/settings/chat-history";
 
@@ -50,5 +51,26 @@ describe("filterChatHistorySnapshots", () => {
         (thread) => thread.threadID,
       ),
     ).toEqual(["global"]);
+  });
+});
+
+describe("latestChatThreadSnapshot", () => {
+  it("selects the most recently updated conversation for a paper", () => {
+    const samePaper = [
+      threads[0],
+      {
+        ...threads[0],
+        threadID: "paper-a-latest",
+        updatedAt: "2026-08-23T04:00:00.000Z",
+      },
+    ];
+
+    expect(latestChatThreadSnapshot(samePaper)?.threadID).toBe(
+      "paper-a-latest",
+    );
+  });
+
+  it("returns null when the paper has no history", () => {
+    expect(latestChatThreadSnapshot([])).toBeNull();
   });
 });

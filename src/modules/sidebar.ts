@@ -31,6 +31,7 @@ import {
   chatHistoryPath,
   deleteChatThread,
   filterChatHistorySnapshots,
+  latestChatThreadSnapshot,
   loadAllChatThreads,
   loadChatThreads,
   saveChatMessages,
@@ -280,6 +281,8 @@ const states = new WeakMap<Element, PanelState>();
 const stateCache = new WeakMap<Element, Map<string, PanelState>>();
 const activeThreads = new WeakMap<Element, Map<string, string>>();
 const latestSelectionItems = new WeakMap<Element, number | null>();
+const selectionActivationSerials = new WeakMap<Element, number>();
+const pendingSelectionItems = new WeakMap<Element, number>();
 const loadedPersistedThreads = new WeakMap<Element, Set<string>>();
 const loadedAllPersistedThreads = new WeakSet<Element>();
 const historyViews = new WeakMap<Element, ChatHistoryScope>();
@@ -294,17 +297,21 @@ type AssistantProgressStage =
 
 // Entry point per Zotero item selection.
 //
-// The visible chat is intentionally tab-driven, not selection-driven. Zotero
-// fires this every time the user moves between papers; switching the sidebar
-// conversation on those events makes long-running chats feel like they
-// disappeared. No conversation is created here: the first chat must be an
-// explicit user action from the composer/tabs.
+// The visible chat follows the selected paper. Each selection restores that
+// paper's most recently updated conversation; a paper without history gets a
+// fresh in-memory conversation. Async activation is guarded below so a slow
+// disk read for paper A cannot replace paper B after the user switches again.
 function renderMount(mount: HTMLElement, itemID: number | null) {
   latestSelectionItems.set(mount, itemID);
   const state = states.get(mount);
   if (!state) {
-    requestPersistedTabsForItem(mount, itemID);
     renderNoActiveChatPanel(mount);
+    if (itemID != null) activateLatestChatForItem(mount, itemID);
+    else requestPersistedTabsForItem(mount, itemID);
+    return;
+  }
+  if (itemID != null && state.itemID !== itemID) {
+    activateLatestChatForItem(mount, itemID);
     return;
   }
   setActiveThreadID(mount, state.itemID, state.threadID);
@@ -535,7 +542,7 @@ function applyChatAppearance(
 }
 
 function renderNoActiveChatPanel(mount: HTMLElement): void {
-  requestAllPersistedThreads(mount);
+  if (latestSidebarItemID(mount) == null) requestAllPersistedThreads(mount);
   const doc = mount.ownerDocument!;
   const panel = el(doc, "div", "zai-app native-panel zai-no-active-chat");
   applyChatAppearance(
@@ -1120,6 +1127,122 @@ function createChatThreadFromSelection(
   states.set(mount, next);
   renderPanel(mount, next);
   return next;
+}
+
+function activateLatestChatForItem(
+  mount: HTMLElement,
+  itemID: number,
+): void {
+  if (states.get(mount)?.itemID === itemID) return;
+  if (pendingSelectionItems.get(mount) === itemID) return;
+
+  const serial = (selectionActivationSerials.get(mount) ?? 0) + 1;
+  selectionActivationSerials.set(mount, serial);
+  pendingSelectionItems.set(mount, itemID);
+  const previous = states.get(mount) ?? null;
+  if (previous) capturePanelState(mount, previous);
+
+  void loadChatThreads(itemID)
+    .then((snapshots) => {
+      if (
+        selectionActivationSerials.get(mount) !== serial ||
+        latestSelectionItems.get(mount) !== itemID ||
+        !mount.isConnected
+      ) {
+        return;
+      }
+
+      const cache = panelStateCache(mount);
+      for (const snapshot of snapshots) {
+        const key = panelStateKey(snapshot.itemID, snapshot.threadID);
+        let threadState = cache.get(key);
+        if (!threadState) {
+          threadState = createPanelState(snapshot.itemID, snapshot.threadID);
+          cache.set(key, threadState);
+        }
+        if (!threadState.sending) applyChatThreadSnapshot(threadState, snapshot);
+      }
+
+      const persistedLatest = latestChatThreadSnapshot(snapshots);
+      let next = persistedLatest
+        ? cache.get(
+            panelStateKey(persistedLatest.itemID, persistedLatest.threadID),
+          ) ?? null
+        : null;
+      const cachedLatest = latestCachedPanelStateForItem(cache, itemID);
+      if (
+        cachedLatest &&
+        (!next || cachedLatest.threadUpdatedAt > next.threadUpdatedAt)
+      ) {
+        next = cachedLatest;
+      }
+
+      if (!next) {
+        next = createPanelState(itemID, makeChatThreadID());
+        next.historyLoaded = true;
+        if (previous) inheritChatControls(next, previous);
+        cache.set(panelStateKey(itemID, next.threadID), next);
+      }
+
+      historyViews.delete(mount);
+      setActiveThreadID(mount, itemID, next.threadID);
+      next.scrollToBottom = true;
+      states.set(mount, next);
+      renderPanel(mount, next);
+    })
+    .catch((err) => {
+      if (
+        selectionActivationSerials.get(mount) !== serial ||
+        latestSelectionItems.get(mount) !== itemID ||
+        !mount.isConnected
+      ) {
+        return;
+      }
+      debugZai("sidebar.paper-chat.activate.failed", {
+        itemID,
+        error: errorMessage(err),
+      });
+      const next = createPanelState(itemID, makeChatThreadID());
+      next.historyLoaded = true;
+      if (previous) inheritChatControls(next, previous);
+      panelStateCache(mount).set(panelStateKey(itemID, next.threadID), next);
+      historyViews.delete(mount);
+      setActiveThreadID(mount, itemID, next.threadID);
+      states.set(mount, next);
+      renderPanel(mount, next);
+    })
+    .finally(() => {
+      if (selectionActivationSerials.get(mount) === serial) {
+        pendingSelectionItems.delete(mount);
+      }
+    });
+}
+
+function latestCachedPanelStateForItem(
+  cache: Map<string, PanelState>,
+  itemID: number,
+): PanelState | null {
+  let latest: PanelState | null = null;
+  for (const candidate of cache.values()) {
+    if (candidate.itemID !== itemID) continue;
+    if (
+      !latest ||
+      candidate.threadUpdatedAt > latest.threadUpdatedAt ||
+      (candidate.threadUpdatedAt === latest.threadUpdatedAt &&
+        candidate.threadCreatedAt > latest.threadCreatedAt)
+    ) {
+      latest = candidate;
+    }
+  }
+  return latest;
+}
+
+function inheritChatControls(next: PanelState, previous: PanelState): void {
+  next.selectedId = previous.selectedId;
+  next.agentPermissionMode = previous.agentPermissionMode;
+  next.copyDebugContext = previous.copyDebugContext;
+  next.uiSettings = previous.uiSettings;
+  next.localUiSettings = previous.localUiSettings;
 }
 
 function switchChatThread(
@@ -10309,6 +10432,12 @@ function renderWindowSidebar(win: Window) {
   const panelState = states.get(state.mount);
   latestSelectionItems.set(state.mount, itemID);
   state.activeConversationItemID = itemID;
+
+  if (itemID != null && panelState?.itemID !== itemID) {
+    activateLatestChatForItem(state.mount, itemID);
+    updateToggleButton(state);
+    return;
+  }
 
   if (panelState) {
     updateSelectedPaperActionButtons(state.mount, panelState, win);

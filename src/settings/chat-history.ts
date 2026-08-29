@@ -134,6 +134,30 @@ export function filterChatHistorySnapshots(
     : snapshots;
 }
 
+export function latestChatThreadSnapshot(
+  snapshots: ChatThreadSnapshot[],
+): ChatThreadSnapshot | null {
+  return snapshots.reduce<ChatThreadSnapshot | null>((latest, candidate) => {
+    if (!latest) return candidate;
+    const candidateUpdatedAt = safeSnapshotTimestamp(candidate.updatedAt);
+    const latestUpdatedAt = safeSnapshotTimestamp(latest.updatedAt);
+    if (candidateUpdatedAt !== latestUpdatedAt) {
+      return candidateUpdatedAt > latestUpdatedAt ? candidate : latest;
+    }
+    const candidateCreatedAt = safeSnapshotTimestamp(candidate.createdAt);
+    const latestCreatedAt = safeSnapshotTimestamp(latest.createdAt);
+    if (candidateCreatedAt !== latestCreatedAt) {
+      return candidateCreatedAt > latestCreatedAt ? candidate : latest;
+    }
+    return candidate.threadID > latest.threadID ? candidate : latest;
+  }, null);
+}
+
+function safeSnapshotTimestamp(value: string): number {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 export interface SaveChatMessagesOptions {
   threadID?: string;
   title?: string;
