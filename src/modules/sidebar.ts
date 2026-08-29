@@ -50,7 +50,6 @@ import {
 import {
   loadToolSettings,
   saveToolSettings,
-  type WebSearchMode,
 } from "../settings/tool-settings";
 import {
   loadUiSettings,
@@ -2961,137 +2960,21 @@ function renderWebSearchSwitcher(
   trigger.className = "web-search-trigger";
   trigger.textContent = "联网";
   trigger.title = enabledForPreset
-    ? webSearchToggleTitle(mode)
+    ? enabled
+      ? `联网已开启：${mode === "cached" ? "Cached" : "Live"}；点击关闭`
+      : "联网已关闭；点击立即开启 Live 联网"
     : "联网工具目前仅对 OpenAI Responses 兼容配置生效";
   trigger.disabled = !enabledForPreset || state.sending;
-  trigger.setAttribute("aria-haspopup", "menu");
-  trigger.setAttribute("aria-expanded", "false");
-
-  const popup = el(doc, "div", "web-search-popup");
-  popup.setAttribute("role", "menu");
-  popup.style.display = "none";
-
-  const closePopup = () => {
-    if (popup.style.display === "none") return;
-    popup.style.display = "none";
-    popup.classList.remove("web-search-popup-portal");
-    popup.style.removeProperty("left");
-    popup.style.removeProperty("top");
-    popup.style.removeProperty("width");
-    if (popup.parentElement !== wrap) wrap.append(popup);
-    trigger.setAttribute("aria-expanded", "false");
-    doc.removeEventListener("mousedown", outsideHandler, true);
-    doc.removeEventListener("keydown", escapeHandler, true);
-    doc.removeEventListener("scroll", viewportHandler, true);
-    doc.defaultView?.removeEventListener("resize", viewportHandler);
-  };
-  const openPopup = () => {
-    if (popup.style.display !== "none") return;
-    const portalRoot = doc.documentElement ?? doc.body;
-    if (!portalRoot) return;
-    popup.classList.add("web-search-popup-portal");
-    portalRoot.append(popup);
-    popup.style.display = "";
-    positionWebSearchPopup(doc, trigger, popup);
-    trigger.setAttribute("aria-expanded", "true");
-    doc.addEventListener("mousedown", outsideHandler, true);
-    doc.addEventListener("keydown", escapeHandler, true);
-    doc.addEventListener("scroll", viewportHandler, true);
-    doc.defaultView?.addEventListener("resize", viewportHandler);
-  };
-  const outsideHandler = (event: Event) => {
-    const target = event.target as Node;
-    if (!wrap.contains(target) && !popup.contains(target)) closePopup();
-  };
-  const escapeHandler = (event: KeyboardEvent) => {
-    if (event.key === "Escape") {
-      closePopup();
-      trigger.focus();
-    }
-  };
-  const viewportHandler = () => closePopup();
-
-  const item = doc.createElement("button");
-  item.type = "button";
-  item.className = enabled
-    ? "web-search-item web-search-item-active"
-    : "web-search-item";
-  item.setAttribute("role", "menuitemcheckbox");
-  item.setAttribute("aria-checked", enabled ? "true" : "false");
-  item.addEventListener("click", () => {
-    closePopup();
+  trigger.setAttribute("aria-pressed", enabled ? "true" : "false");
+  trigger.addEventListener("click", () => {
     saveToolSettings(zoteroPrefs(), {
       ...settings,
       webSearchMode: enabled ? "disabled" : "live",
     });
     renderPanel(mount, state);
   });
-  item.append(
-    el(doc, "span", "web-search-item-icon", enabled ? "✓" : ""),
-    el(doc, "span", "web-search-item-main", "联网"),
-    el(doc, "span", "web-search-item-check", enabled ? "✓" : ""),
-    el(
-      doc,
-      "span",
-      "web-search-item-detail",
-      enabled ? "已开启；模式在设置中修改" : "点击开启；模式在设置中修改",
-    ),
-  );
-  popup.append(item);
-
-  trigger.addEventListener("click", () => {
-    if (popup.style.display === "none") openPopup();
-    else closePopup();
-  });
-
-  wrap.append(trigger, popup);
+  wrap.append(trigger);
   return wrap;
-}
-
-function positionWebSearchPopup(
-  doc: Document,
-  trigger: HTMLElement,
-  popup: HTMLElement,
-): void {
-  const root = doc.documentElement;
-  const viewportWidth =
-    root?.clientWidth || doc.defaultView?.innerWidth || 320;
-  const viewportHeight =
-    root?.clientHeight || doc.defaultView?.innerHeight || 480;
-  const margin = 8;
-  const gap = 8;
-  const width = Math.min(240, Math.max(180, viewportWidth - margin * 2));
-  const triggerRect = trigger.getBoundingClientRect();
-
-  popup.style.width = `${width}px`;
-  popup.style.left = `${Math.max(
-    margin,
-    Math.min(triggerRect.left, viewportWidth - width - margin),
-  )}px`;
-  popup.style.top = "0px";
-
-  const popupHeight = Math.max(popup.getBoundingClientRect().height, 54);
-  const above = triggerRect.top - popupHeight - gap;
-  const below = triggerRect.bottom + gap;
-  const top =
-    above >= margin
-      ? above
-      : Math.max(
-          margin,
-          Math.min(below, viewportHeight - popupHeight - margin),
-        );
-  popup.style.top = `${top}px`;
-}
-
-function webSearchToggleTitle(mode: WebSearchMode): string {
-  switch (mode) {
-    case "cached":
-      return "联网已开启：Cached；点击可关闭";
-    case "live":
-      return "联网已开启：Live；点击可关闭";
-    default:
-      return "联网已关闭；点击可开启";
-  }
 }
 
 // Composer-footer model switcher (Claudian-style).
