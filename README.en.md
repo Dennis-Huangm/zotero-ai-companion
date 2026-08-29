@@ -1,208 +1,197 @@
 # Zotero AI Companion
 
-[中文](README.md) | [English](README.en.md)
+[![Release](https://img.shields.io/github/v/release/Dennis-Huangm/zotero-ai-companion?display_name=tag&sort=semver)](https://github.com/Dennis-Huangm/zotero-ai-companion/releases/latest)
+[![Release XPI](https://github.com/Dennis-Huangm/zotero-ai-companion/actions/workflows/release.yml/badge.svg)](https://github.com/Dennis-Huangm/zotero-ai-companion/actions/workflows/release.yml)
+[![Zotero](https://img.shields.io/badge/Zotero-7%E2%80%9310-cc2936)](docs/ZOTERO_10_COMPATIBILITY.md)
+[![License](https://img.shields.io/github/license/Dennis-Huangm/zotero-ai-companion)](LICENSE)
 
-Keep the small paper-reading tasks inside Zotero: ask questions, translate a paragraph, translate the full PDF, turn answers into notes, and attach images when text is not enough.
+[中文](README.md) · [English](README.en.md)
 
-This is not a separate chat app. It is a sidebar next to Zotero's PDF reader. The sidebar follows the current paper, and the conversation stays attached to that paper.
+Bring AI into the Zotero reading workflow instead of moving papers into a separate chat application.
 
-![Zotero PDF and AI sidebar](docs/assets/zotero-real-overview.png)
+Zotero AI Companion is a paper-aware sidebar for Zotero. It can answer questions about the current paper, inspect PDF content, explain selections, translate paragraphs, analyze images, search the web, and write useful results back to Zotero notes. When you switch papers, it opens the most recently updated conversation for that paper; if none exists, it starts a new one.
 
-## What It Is For
+## Features
 
-Reading a paper often means interrupting yourself:
+| Feature                    | What it does                                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Paper-aware chat           | Reads item metadata, abstracts, full PDF text, targeted ranges, current selections, and Zotero annotations.               |
+| Automatic paper switching  | Restores the latest conversation for the selected paper, or creates a new conversation when no history exists.            |
+| Full and point translation | Translates PDFs paragraph by paragraph and reuses cached translations when possible.                                      |
+| Conversation history       | Provides a dedicated page for all/current-paper filtering, opening, renaming, and deleting conversations.                 |
+| Image input                | Accepts local image files and images pasted from the system clipboard.                                                    |
+| Web search                 | The `Web` button directly enables or disables Live web search; valid citations become clickable sources.                  |
+| Zotero writes              | Appends answers to child notes and can create PDF highlights, comments, and text annotations when explicitly requested.   |
+| Local tools                | Lets the model inspect metadata, search a PDF, read an exact range, read full text, or perform controlled Zotero actions. |
+| Sync and backup            | Optionally syncs plugin state through a separate WebDAV configuration and supports JSON backup/restore.                   |
+| Multiple providers         | Supports OpenAI, Anthropic, and compatible endpoints implementing the corresponding APIs.                                 |
 
-- copy a PDF paragraph into a translation tool;
-- copy title, abstract, and selected text into a chat app;
-- upload or paste an image to ask about a figure;
-- move the answer back into a Zotero note;
-- switch machines and lose the context of what you asked.
+## Quick Start
 
-Zotero AI Companion is built around that loop. You keep reading in Zotero, with a sidebar that can use the current paper as context.
+### 1. Install
 
-## How It Feels In Use
+1. Download `zotero-ai-companion.xpi` from the [latest release](https://github.com/Dennis-Huangm/zotero-ai-companion/releases/latest).
+2. Open `Tools → Plugins` in Zotero.
+3. Click the gear button and choose `Install Plugin From File…`.
+4. Select the XPI and restart Zotero when prompted.
+5. Open the sidebar settings and add at least one model preset.
 
-### Click a paragraph to translate it
+If you previously installed the upstream or an early local build, disable or remove these old IDs first:
 
-![Point translation preview](docs/assets/zotero-real-translation.png)
+- `zotero-ai-sidebar@local`
+- `zotero-ai-sidebar@huangkiki`
 
-Turn on `Point Translate`, click a PDF paragraph, and the translation appears in the sidebar conversation. No extra floating box covers the PDF.
-
-If you already ran full-text translation, point translation will reuse the cached paragraph result when possible.
-
-### Start with a rough question
-
-For example:
-
-```text
-What problem does this paper solve, and are the method and experiments convincing?
-```
-
-Or:
-
-```text
-Organize this paper by problem, method, experiments, and limitations.
-```
-
-The sidebar can read the current Zotero item, PDF text, selected text, and annotations, so you do not need to copy context manually.
-
-### Save useful answers as Zotero notes
-
-After reading, ask for a structured note:
+This project uses its own plugin ID:
 
 ```text
-Create a literature note with background, method, experiments, results, limitations, and follow-up questions.
+zotero-ai-companion@dennis-huangm.github.io
 ```
 
-When the answer looks useful, use `Write to Note` to append it to the current Zotero item.
+After the independent build is installed once, later versions can be delivered through this repository's stable update channel.
 
-## The Buttons Near The Composer
+### 2. Configure a model
 
-![Composer and quick actions preview](docs/assets/zotero-real-composer.png)
+A model preset contains:
 
-- `Summarize`: get a paper overview.
-- `Full-text key points`: read the full PDF and collect notable points.
-- `Explain selection`: ask about selected PDF text.
-- `Queue`: revisit unfinished or completed tasks.
-- `Screenshot` / `Image`: send figures, formulas, or UI states.
-- `Web`: enable web access when the current PDF is not enough.
+- `Provider`: OpenAI, Anthropic, or a compatible implementation;
+- `API Key`: the credential for that service;
+- `Base URL`: the official endpoint or your compatible relay;
+- `Model`: a model ID supported by the endpoint;
+- `Max tokens`: the output limit for one response;
+- `Reasoning`: effort and summary controls for models that support them.
 
-The footer also lets you switch model, reasoning level, and YOLO mode. API keys and model settings stay in Zotero preferences.
+Presets are stored in local Zotero preferences and are never committed to this repository. Do not expose API keys in issues, logs, or screenshots.
 
-## Install
+### 3. Read and ask
 
-1. Open `Tools` -> `Plugins` and first remove or disable old plug-ins with ID `zotero-ai-sidebar@local` or `zotero-ai-sidebar@huangkiki`.
-2. Download the latest `zotero-ai-companion.xpi` from [GitHub Releases](https://github.com/Dennis-Huangm/zotero-ai-companion/releases/latest).
-3. Click the gear icon and choose `Install Plugin From File...`.
-4. Select the downloaded `.xpi` and restart Zotero 7, 8, 9, or 10 if prompted.
-5. Configure at least one model preset in the sidebar settings.
+Use the composer directly or start with a quick action:
 
-Starting with `1.0.0`, the plug-in uses the independent ID
-`zotero-ai-companion@dennis-huangm.github.io` and receives automatic updates
-from the fixed release channel in `Dennis-Huangm/zotero-ai-companion`.
-Preference keys and the history filename remain unchanged, so migration does
-not clear existing configuration or history. Do not enable an old-ID plug-in at
-the same time, because both would inject the sidebar.
+- `Summarize Paper`: organize the problem, method, experiments, and conclusion;
+- `Full-text Key Points`: read the full PDF and extract notable content;
+- `Explain Selection`: ask about the text selected in the PDF reader;
+- `Full Translate / Retranslate / Point Translate`: translate the paper or a clicked paragraph;
+- `Image`: attach a figure, formula, or screenshot from the clipboard;
+- `Web`: click once to enable Live web search and again to disable it;
+- `+ New Chat`: create another conversation for the current paper.
 
-The same XPI supports Zotero 7–10. See
-[`docs/ZOTERO_10_COMPATIBILITY.md`](docs/ZOTERO_10_COMPATIBILITY.md) for the
-Zotero 10 compatibility audit and manual smoke-test checklist.
-See [`docs/WINDOWS_SUPPORT.md`](docs/WINDOWS_SUPPORT.md) for Windows runtime
-paths and platform-cleanup details.
+Example prompts:
 
-## Chat History
-
-After a message is sent, the conversation is saved automatically to
-`zotero-ai-sidebar-chat-history.json` in the Zotero data directory. On the
-next launch, the sidebar restores the most recently updated conversation. Use
-the top `History` button to open the dedicated history page, switch between all
-conversations and conversations for the current paper, and rename or delete
-records. The composer no longer has a chat-tab row; `+ New Chat` is in the
-footer toolbar.
-
-History files created in the Zotero profile directory by older versions are
-migrated automatically. Before upgrading from a version that failed to persist
-the current in-memory chat, use the top `Copy` button to keep a Markdown copy.
-
-## Model Setup
-
-Create a model preset in the plugin settings:
-
-- Provider: `openai`, `anthropic`, or an OpenAI-compatible endpoint.
-- API key: stored locally in Zotero preferences.
-- Base URL: the official URL or your relay endpoint.
-- Model: any model supported by that endpoint.
-- Max tokens and tool iterations: local controls for length, cost, and tool calls.
-
-Do not commit API keys, base URLs, or private model names.
-
-## What Else It Can Do
-
-- Read current item metadata, selected text, annotations, PDF snippets, and full PDF text.
-- Translate a full PDF and keep paragraph results in the paper conversation.
-- Translate clicked paragraphs and reuse full-text translation cache.
-- Copy answers as Markdown or write them into Zotero child notes.
-- Draft PDF annotations using customizable color guidance.
-- Use image uploads, clipboard paste, quick prompts, and slash commands.
-- Search arXiv and fetch paper full text.
-- Sync chats, prompts, settings, and selected annotations with WebDAV.
-- Export and restore settings as JSON.
-
-## Sync Model
-
-Zotero syncs the library and PDF files. The plugin syncs its own extra state, such as conversations, quick prompts, and selected annotation state.
-
-```mermaid
-flowchart TB
-    subgraph Local[Local machine]
-        Lib[(Zotero library + annotations)]
-        Storage[storage/*.pdf]
-        Plugin[Plugin state<br/>chats / settings / prompts]
-    end
-    subgraph Cloud[Cloud]
-        ZS[zotero.org<br/>metadata sync]
-        WD1[WebDAV<br/>Zotero file sync]
-        WD2[WebDAV<br/>plugin sync]
-    end
-    Lib <-->|metadata| ZS
-    Storage <-->|PDF files| WD1
-    Plugin <-->|push / pull| WD2
+```text
+Summarize this paper by research question, core method, experiment design,
+main results, and limitations.
 ```
 
-This keeps Zotero's normal sync intact while giving the plugin a separate backup path.
+```text
+Compare the proposed method with the baseline mentioned in my selection.
+Is the evidence sufficient?
+```
 
-## How It Works
+```text
+Turn this discussion into a literature note while preserving verifiable
+numbers and limitations.
+```
 
-The sidebar exposes real Zotero operations as local tools: read the current paper, search the PDF, read full text, write notes, or draft annotations. The model decides which tool to call and with what arguments; the plugin validates and runs the operation locally.
+## Conversations and Papers
+
+Conversations are associated with Zotero items. When the selected paper changes, the plugin:
+
+1. opens that paper's most recently updated conversation;
+2. creates a new conversation when the paper has no history;
+3. ignores stale asynchronous loads when papers are switched quickly;
+4. keeps other in-progress paper conversations alive in memory.
+
+Use the top `History` button to open the management page. It can show all conversations or only conversations for the current paper, and supports opening, renaming, and deleting records.
+
+Local history is stored in the Zotero data directory as:
+
+```text
+zotero-ai-sidebar-chat-history.json
+```
+
+The legacy filename is intentionally preserved so existing history survives migration. Older profile-local history is migrated to the Zotero data directory when first read.
+
+## Web Search, Citations, and Images
+
+`Web` is a direct toggle with no secondary popup. Compatible OpenAI Responses endpoints can use Web Search when it is enabled. Valid `url_citation` annotations are rendered as a Markdown source list, while leaked internal citation markers from compatible relays are removed.
+
+Images can be added by selecting a local file or by taking a screenshot with the operating system and pressing `Ctrl+V` in the composer. The plugin does not provide a separate screenshot button.
+
+## Zotero Tools and Write Safety
+
+The model does not access the Zotero database directly. The plugin exposes a controlled set of local tools, validates their arguments, and performs the actual read or write on the local machine.
 
 ```mermaid
 flowchart LR
-    subgraph Zotero[Zotero]
-        PDF[PDF Reader]
-        Note[Notes]
-        Side[Sidebar]
-    end
-    User([Reader]) -->|prompt / selection / image| Side
-    Side -->|tool calls| Tools[Local Zotero tools]
-    Tools -->|read / write| Zotero
-    Side <-->|HTTPS| Provider[OpenAI / Anthropic /<br/>OpenAI-compatible]
-    Side -.plugin state.-> WebDAV[(WebDAV)]
+    User([Reader]) -->|prompt / selection / image| Sidebar[Zotero AI Companion]
+    Sidebar <-->|HTTPS| Provider[Model provider]
+    Sidebar -->|controlled tool call| Tools[Local Zotero tools]
+    Tools --> Metadata[metadata / PDF / annotations]
+    Tools --> Notes[child notes / PDF annotations]
+    Sidebar -.optional sync.-> WebDAV[(WebDAV)]
 ```
+
+The default permission mode is intended for reading and analysis. Mutating actions such as writing notes or creating annotations require an explicit user request; approval-gated write tools only run without per-action approval when YOLO mode is enabled. Verify the current paper and instruction before enabling it.
+
+## Data and Privacy
+
+- API keys, base URLs, and model presets are stored in local Zotero preferences.
+- Conversation history is stored in the local Zotero data directory by default.
+- Prompts and the paper content needed for a task are sent to the selected model provider.
+- When web search is enabled, search queries and sources are handled by the compatible provider.
+- Plugin WebDAV sync is optional and separate from Zotero's own library/PDF sync.
+
+Decide whether to send full text or images based on the paper's copyright/confidentiality requirements and the provider's privacy policy.
+
+## Compatibility
+
+- Zotero 7, 8, 9, and 10;
+- Windows is the primary maintained and manually tested environment;
+- cross-platform paths remain for macOS and Linux, but current verification is Windows-first;
+- one XPI supports the full Zotero 7–10 range.
+
+More documentation:
+
+- [Zotero 10 compatibility audit](docs/ZOTERO_10_COMPATIBILITY.md)
+- [Windows support](docs/WINDOWS_SUPPORT.md)
+- [Tools and MCP](docs/TOOLS_AND_MCP.md)
+- [Harness engineering](docs/HARNESS_ENGINEERING.md)
 
 ## Development
 
-Install dependencies:
+Node.js 22 or newer and a Zotero installation are recommended.
 
 ```bash
 npm install
-```
-
-Run tests:
-
-```bash
 npm test
-```
-
-Build a local XPI:
-
-```bash
 npm run build
 ```
 
-Build output is written to `.scaffold/build/`. Local `.xpi` files are ignored by Git.
+The built plugin is written to:
 
-## Release
+```text
+.scaffold/build/zotero-ai-companion.xpi
+```
 
-After the working tree is clean and `package.json` has the desired version:
+Run the development build:
+
+```bash
+npm start
+```
+
+Publish a release:
 
 ```bash
 npm run release:xpi
 ```
 
-The script runs tests, builds the XPI, creates and pushes the matching `v<version>` tag, waits for GitHub Actions, and uploads `.scaffold/build/*.xpi` to the GitHub Release.
+The release script validates the version, runs tests, builds the XPI, creates the matching `v<version>` tag, and waits for GitHub Actions to publish the installer and update manifests. See [docs/RELEASE.md](docs/RELEASE.md) for details.
 
-More details are in [docs/RELEASE.md](docs/RELEASE.md).
+## Origin
+
+This project continues development from [huangkiki/zotero-ai-sidebar](https://github.com/huangkiki/zotero-ai-sidebar) with an independent plugin ID, repository, and update channel. The upstream repository is retained as a reference and cannot overwrite this project's releases.
+
+Use [GitHub Issues](https://github.com/Dennis-Huangm/zotero-ai-companion/issues) for bug reports and feature requests. Include the Zotero version, plugin version, reproduction steps, and sanitized error details.
 
 ## License
 
-AGPL-3.0-or-later.
+[AGPL-3.0-or-later](LICENSE)
