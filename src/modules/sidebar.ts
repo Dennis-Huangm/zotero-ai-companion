@@ -301,7 +301,7 @@ type AssistantProgressStage =
 // paper's most recently updated conversation; a paper without history gets a
 // fresh in-memory conversation. Async activation is guarded below so a slow
 // disk read for paper A cannot replace paper B after the user switches again.
-function renderMount(mount: HTMLElement, itemID: number | null) {
+export function renderMount(mount: HTMLElement, itemID: number | null) {
   latestSelectionItems.set(mount, itemID);
   const state = states.get(mount);
   if (!state) {
@@ -797,11 +797,20 @@ function openChatHistoryView(
 
 function closeChatHistoryView(
   mount: HTMLElement,
-  state: PanelState | null,
 ): void {
   historyViews.delete(mount);
-  if (state) renderPanel(mount, state);
-  else renderNoActiveChatPanel(mount);
+  // History actions may have deleted the state captured by the back button.
+  // Resolve the live state, and actually start recovery when none remains.
+  const state = states.get(mount);
+  const itemID = latestSidebarItemID(mount);
+  if (state && state.itemID === itemID) {
+    renderPanel(mount, state);
+  } else if (itemID != null) {
+    renderNoActiveChatPanel(mount);
+    activateLatestChatForItem(mount, itemID);
+  } else {
+    createChatThreadFromSelection(mount);
+  }
 }
 
 function capturePanelStateIfPresent(
@@ -822,7 +831,7 @@ function renderChatHistoryPage(
   const heading = el(doc, "strong", "zai-history-page-title", "历史记录");
   const back = buttonEl(doc, "返回对话");
   back.className = "zai-history-back";
-  back.addEventListener("click", () => closeChatHistoryView(mount, state));
+  back.addEventListener("click", () => closeChatHistoryView(mount));
   head.append(heading, back);
 
   const currentItemID = latestSidebarItemID(mount) ?? state?.itemID ?? null;
